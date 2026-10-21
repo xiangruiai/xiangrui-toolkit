@@ -1,6 +1,6 @@
 # three-layer-memory · 三层记忆
 
-如果你要在 Codex 的每个项目文件夹里保存项目目标、方法和进展，并在新对话继续项目，请使用 [项目级三层记忆](../../上下文管理/project-three-layer-memory/README.md)。它支持普通项目目录和 Codex 全局默认接入；本目录继续提供个人知识库版。
+如果你要在每个项目文件夹里保存项目目标、方法和进展，并让本地 Agent 在新对话继续项目，请使用 [项目级三层记忆](../../上下文管理/project-three-layer-memory/README.md)。它支持普通项目目录，以及 Codex、Claude Code、Gemini CLI、Cursor 等宿主的规则接入；本目录继续提供个人知识库版。
 
 > 给 Codex、Claude Code 或其他支持 Agent Skills 的 AI 装上一套可检查、可召回、不会静默覆盖的个人长期记忆系统。
 

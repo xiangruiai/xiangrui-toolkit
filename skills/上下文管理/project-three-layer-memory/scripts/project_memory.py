@@ -20,6 +20,7 @@ CONFIG_PATH = MEMORY_DIR / 'paths.json'
 DISABLED = Path('.project-memory-disabled')
 START_MARKER = '<!-- project-three-layer-memory:project:start -->'
 END_MARKER = '<!-- project-three-layer-memory:project:end -->'
+BRIDGE_FILES = {'claude': 'CLAUDE.md', 'gemini': 'GEMINI.md'}
 DEFAULT_FILES = {
     'project': (MEMORY_DIR / 'PROJECT.md').as_posix(),
     'procedure': (MEMORY_DIR / 'PROCEDURES.md').as_posix(),
@@ -140,16 +141,135 @@ def managed_block(config):
 '''
 
 
-def replace_block(text, block):
-    if text.count(START_MARKER) != text.count(END_MARKER) or text.count(START_MARKER) > 1:
+def replace_block(text, block, start_marker=START_MARKER, end_marker=END_MARKER):
+    if text.count(start_marker) != text.count(end_marker) or text.count(start_marker) > 1:
         raise ValueError('Malformed or repeated project memory managed markers')
-    if START_MARKER in text:
-        start = text.index(START_MARKER)
-        end = text.index(END_MARKER) + len(END_MARKER)
+    if start_marker in text:
+        start = text.index(start_marker)
+        end = text.index(end_marker) + len(end_marker)
         if end <= start:
             raise ValueError('Managed block markers are out of order')
         return text[:start] + block.rstrip() + text[end:]
     return text + ('' if not text or text.endswith('\n') else '\n') + ('\n' if text else '') + block
+
+
+def markdown_context(text):
+    """Track simple Markdown fences/comments so examples do not become imports."""
+    imports = []
+    visible_lines = []
+    fence = None
+    comment = False
+    for line in text.splitlines():
+        if fence is not None:
+            closing = re.match(r'^ {0,3}(`{3,}|~{3,})\s*$', line)
+            if closing and closing.group(1)[0] == fence[0] and len(closing.group(1)) >= len(fence):
+                fence = None
+            continue
+        # A fence before any comment opener is a literal example. HTML-looking
+        # text inside that fence must not swallow later, real @imports.
+        if not comment:
+            opening = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+            if opening:
+                fence = opening.group(1)
+                continue
+        visible = ''
+        cursor = 0
+        while cursor < len(line):
+            if comment:
+                end = line.find('-->', cursor)
+                if end == -1:
+                    break
+                comment = False
+                cursor = end + 3
+            else:
+                start = line.find('<!--', cursor)
+                if start == -1:
+                    visible += line[cursor:]
+                    break
+                visible += line[cursor:start]
+                comment = True
+                cursor = start + 4
+        if not re.match(r'^(?: {4}|\t)', visible):
+            visible_lines.append(visible)
+        match = re.fullmatch(r' {0,3}@(?:\./)?([^\s]+)[ \t]*', visible)
+        if match:
+            imports.append(match.group(1))
+    return {'imports': imports, 'visible_text': '\n'.join(visible_lines), 'unclosed_fence': fence is not None, 'unclosed_comment': comment}
+
+
+def active_imports(text):
+    # Reuse only unambiguous standalone imports when modifying native entries.
+    return iter(markdown_context(text)['imports'])
+
+
+def potential_native_imports(text):
+    """Conservatively detect direct root-native @imports, including prose."""
+    visible = markdown_context(text)['visible_text']
+    # Native imports can appear inline, but examples in backtick code spans and
+    # ordinary URL/email addresses must not be interpreted as local imports.
+    visible = re.sub(r'(`+).*?\1', ' ', visible, flags=re.S)
+    visible = re.sub(r'\b(?:[A-Za-z][A-Za-z0-9+.-]*://|mailto:)[^\s<>]+', ' ', visible, flags=re.I)
+    names = '|'.join(re.escape(name) for name in BRIDGE_FILES.values())
+    pattern = (r'(?<![\w@/\\.-])@(?:\./)*(' + names +
+               r')(?=$|[\s,;:!?()\[\]{}<>\"\']|\.(?=\s|$))')
+    canonical = {name.casefold(): name for name in BRIDGE_FILES.values()}
+    return {canonical[match.group(1).casefold()] for match in re.finditer(pattern, visible, re.I)}
+
+
+def bridge_markers(agent):
+    return (f'<!-- project-three-layer-memory:bridge:{agent}:start -->',
+            f'<!-- project-three-layer-memory:bridge:{agent}:end -->')
+
+
+def bridge_plan(project, config, instructions, instruction_text):
+    plans = []
+    target = instructions.name
+    for agent in config.get('bridges', []):
+        path = safe_path(project, BRIDGE_FILES[agent], markdown=True)
+        original = read_utf8(path) if path.exists() else ''
+        start, end = bridge_markers(agent)
+        block = f'{start}\n@{target}\n{end}\n'
+        # Check our markers even when an independent import already exists.
+        updated = replace_block(original, block, start, end)
+        context = markdown_context(original)
+        if start not in original and target in context['imports']:
+            updated = original
+        elif start not in original and (context['unclosed_fence'] or context['unclosed_comment']):
+            raise ValueError(f'Cannot append a native import inside an unclosed code fence/comment in {BRIDGE_FILES[agent]}')
+        if BRIDGE_FILES[agent] in potential_native_imports(instruction_text):
+            raise ValueError(f'Direct native import cycle: {target} imports {BRIDGE_FILES[agent]}')
+        if target not in set(active_imports(updated)):
+            raise ValueError(f'Native import would be hidden by an unclosed code fence/comment in {BRIDGE_FILES[agent]}')
+        plans.append({'agent': agent, 'path': path, 'original': original, 'updated': updated, 'target': target})
+    return plans
+
+
+def audit_bridges(project, config, instructions, instruction_text):
+    reports = []
+    for agent in config.get('bridges', []):
+        filename = BRIDGE_FILES[agent]
+        report = {'agent': agent, 'path': filename, 'target': instructions.name, 'ok': False}
+        try:
+            path = safe_path(project, filename, markdown=True)
+            if not path.is_file():
+                report['error'] = 'native_entry_missing'
+            else:
+                text = read_utf8(path)
+                start, end = bridge_markers(agent)
+                replace_block(text, f'{start}\n@{instructions.name}\n{end}\n', start, end)
+                own_imports = set(active_imports(text[text.index(start):text.index(end)])) if start in text else None
+                if own_imports is not None and own_imports != {instructions.name}:
+                    report['error'] = 'managed_native_import_outdated'
+                elif filename in potential_native_imports(instruction_text):
+                    report['error'] = 'direct_import_cycle'
+                elif instructions.name not in set(active_imports(text)):
+                    report['error'] = 'effective_instruction_import_missing_or_hidden'
+                else:
+                    report['ok'] = True
+        except (OSError, ValueError) as exc:
+            report['error'] = str(exc)
+        reports.append(report)
+    return reports
 
 
 def validate_config(project, config):
@@ -163,7 +283,7 @@ def validate_config(project, config):
     resolved = [safe_path(project, files[layer], markdown=True) for layer in DEFAULT_FILES]
     if len(set(resolved)) != 3:
         raise ValueError('Memory roles must have distinct files')
-    reserved = {project / 'AGENTS.md', project / 'AGENTS.override.md', project / 'CLAUDE.md'}
+    reserved = {project / name for name in ('AGENTS.md', 'AGENTS.override.md', *BRIDGE_FILES.values())}
     if any(target in reserved for target in resolved):
         raise ValueError('Instruction files cannot be mapped as memory data')
     history_rel = portable_relative(config.get('history_dir'))
@@ -176,6 +296,11 @@ def validate_config(project, config):
     memory = safe_path(project, MEMORY_DIR.as_posix())
     if memory.exists() and not memory.is_dir():
         raise ValueError('.project-memory must be a directory')
+    bridges = config.get('bridges', [])
+    if not isinstance(bridges, list) or any(not isinstance(agent, str) or agent not in BRIDGE_FILES for agent in bridges):
+        raise ValueError('Registered bridges must be a list of claude/gemini host names')
+    if 'bridges' in config:
+        config['bridges'] = sorted(set(bridges))
     return config
 
 
@@ -250,12 +375,15 @@ def configured_mapping(project, args):
             if not mapped.is_file():
                 raise ValueError(f'Explicit mappings must refer to existing Markdown files: {override}')
             config['files'][layer] = portable_relative(override)
+    if args.agent in BRIDGE_FILES:
+        config['bridges'] = sorted(set(config.get('bridges', [])) | {args.agent})
     return validate_config(project, config)
 
 
-def init_actions(project, config, instructions, original, updated):
+def init_actions(project, config, instructions, original, updated, bridges):
     actions = [{'path': rel, 'action': 'reuse_existing' if (project / rel).exists() else 'create'} for rel in config['files'].values()]
     actions += [{'path': CONFIG_PATH.as_posix(), 'action': 'keep_or_update_mapping'}, {'path': instructions.relative_to(project).as_posix(), 'action': 'unchanged' if updated == original else 'update_managed_block'}]
+    actions.extend({'path': item['path'].relative_to(project).as_posix(), 'agent': item['agent'], 'action': 'unchanged' if item['updated'] == item['original'] else 'update_native_import'} for item in bridges)
     return actions
 
 
@@ -267,7 +395,8 @@ def cmd_init(args):
     instructions = instruction_path(project)
     original = read_utf8(instructions) if instructions.exists() else ''
     updated = replace_block(original, managed_block(config))
-    actions = init_actions(project, config, instructions, original, updated)
+    bridges = bridge_plan(project, config, instructions, updated)
+    actions = init_actions(project, config, instructions, original, updated, bridges)
     if args.dry_run:
         output({'ok': True, 'dry_run': True, 'project': str(project), 'actions': actions, 'reuse_candidates': candidates(project), 'mapping': config})
         return 0
@@ -279,7 +408,8 @@ def cmd_init(args):
         instructions = instruction_path(project)
         original = read_utf8(instructions) if instructions.exists() else ''
         updated = replace_block(original, managed_block(config))
-        actions = init_actions(project, config, instructions, original, updated)
+        bridges = bridge_plan(project, config, instructions, updated)
+        actions = init_actions(project, config, instructions, original, updated, bridges)
         for layer, rel in config['files'].items():
             target = safe_path(project, rel, markdown=True)
             if not target.exists():
@@ -290,6 +420,9 @@ def cmd_init(args):
             atomic_write(project, config_path, rendered)
         if updated != original:
             atomic_write(project, instructions, updated)
+        for bridge in bridges:
+            if bridge['updated'] != bridge['original']:
+                atomic_write(project, bridge['path'], bridge['updated'])
     output({'ok': True, 'project': str(project), 'initialized': True, 'content_status': memory_status(read_memory(project, config)), 'actions': actions, 'reuse_candidates': candidates(project), 'mapping': config})
     return 0
 
@@ -444,6 +577,8 @@ def cmd_audit(args):
     instructions = instruction_path(project)
     rule_text = read_utf8(instructions) if instructions.exists() else ''
     protocol_present = managed_block(config).rstrip() in rule_text
+    bridges = audit_bridges(project, config, instructions, rule_text)
+    bridges_ok = all(report['ok'] for report in bridges)
     secrets = []
     for path in iter_memory_files(project, config):
         for number, line in enumerate(read_utf8(path).splitlines(), 1):
@@ -451,8 +586,8 @@ def cmd_audit(args):
             if categories:
                 secrets.append({'path': path.relative_to(project).as_posix(), 'line': number, 'categories': categories})
     content_status = memory_status(read_memory(project, config)) if not missing else 'incomplete'
-    ok = not missing and protocol_present and not secrets and not disabled
-    output({'ok': ok, 'initialized': not missing and protocol_present, 'project': str(project), 'disabled': disabled, 'content_status': content_status, 'missing': missing, 'instruction_file': instructions.relative_to(project).as_posix(), 'protocol_present': protocol_present, 'suspected_secrets': secrets, 'mapping': config, 'notice': 'File and protocol checks do not prove that a new model conversation loaded these memories.'})
+    ok = not missing and protocol_present and bridges_ok and not secrets and not disabled
+    output({'ok': ok, 'initialized': not missing and protocol_present, 'project': str(project), 'disabled': disabled, 'content_status': content_status, 'missing': missing, 'instruction_file': instructions.relative_to(project).as_posix(), 'protocol_present': protocol_present, 'bridges_ok': bridges_ok, 'bridges': bridges, 'suspected_secrets': secrets, 'mapping': config, 'notice': 'File and protocol checks do not prove that a new model conversation loaded these memories.'})
     return 0 if ok else 2
 
 
@@ -471,6 +606,7 @@ def build_parser():
     init = commands.add_parser('init', help='Initialize memory and a short project rule block without overwriting project content')
     init.add_argument('--project', required=True)
     init.add_argument('--dry-run', action='store_true')
+    init.add_argument('--agent', choices=('codex', 'claude', 'gemini', 'generic'), default='generic', help='Optionally connect this project to a native Claude Code or Gemini CLI instruction entry')
     init.add_argument('--context-file')
     init.add_argument('--procedures-file')
     init.add_argument('--state-file')

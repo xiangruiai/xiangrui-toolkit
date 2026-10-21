@@ -1,8 +1,8 @@
 ---
 name: project-three-layer-memory
-description: 项目级三层记忆：在任意项目文件夹保存项目背景、可复用方法和带来源的历史与交接，让 Codex 新对话继续处理项目。用于初始化项目记忆、继续项目、记住项目约束或方法、保存阶段进展、回忆决策、记忆体检，以及安装者明确要求的 Codex 全局默认接入。不用于维护个人画像、一般聊天或无关项目；单纯问答不创建记忆。
+description: 项目级三层记忆：在任意项目文件夹保存背景、可复用方法和带来源的历史交接，让能读写本地文件的 Agent 换对话后继续处理项目。用于初始化项目记忆、继续项目、保存约束与方法、阶段进展、决策召回、记忆体检，以及安装者明确要求的宿主全局默认接入。支持 Codex、Claude Code、Gemini CLI 及可接入项目规则的其他 Agent；不用于个人画像、一般聊天或无关项目，单纯问答不创建记忆。
 license: MIT
-compatibility: 需要 Python 3.9 或更新版本；适用于可读写本地项目文件的 Codex 或其他 Agent，无 Git、Obsidian 或特定目录体系前提。
+compatibility: 需要 Python 3.9 或更新版本，及可读写本地项目文件和运行脚本的 Agent；无 Git、Obsidian 或特定目录体系前提。各宿主按自身规则入口和权限接入，网页聊天产品不因安装本包自动获得文件能力。
 ---
 
 # 项目级三层记忆
@@ -31,13 +31,15 @@ compatibility: 需要 Python 3.9 或更新版本；适用于可读写本地项�
 下列 `<skill-dir>` 均指本 `SKILL.md` 所在目录，使用其真实绝对路径。
 
 ```bash
-python3 "<skill-dir>/scripts/project_memory.py" init --project "<项目根目录>" --dry-run
-python3 "<skill-dir>/scripts/project_memory.py" init --project "<项目根目录>"
+python3 "<skill-dir>/scripts/project_memory.py" init --project "<项目根目录>" --agent generic --dry-run
+python3 "<skill-dir>/scripts/project_memory.py" init --project "<项目根目录>" --agent generic
 ```
 
 用户已要求初始化，或已主动启用全局默认且当前在处理明确项目时，检查预览后在既有授权内直接执行，不增加形式确认。单纯解释、查一个事实或只读审阅不因全局默认而新建文件。
 
-已有相同职责文档时，用 `--context-file`、`--procedures-file`、`--state-file` 指向项目内真实相对路径，例如 `--context-file CONTEXT.md --state-file PROGRESS.md`。先读原件，确认职责适合；不凭文件名把任意文件当成可替换的状态。初始化保留已有正文，并在实际生效的 `AGENTS.override.md` 或 `AGENTS.md` 接入受管规则。完成后回读改动与配置，报告真实映射。
+先识别当前执行宿主，再显式选择 `--agent`：`codex`、`claude`、`gemini`，其他支持项目 AGENTS 的 Agent 用 `generic`，未知宿主也以 `generic` 保守处理。Claude Code 与 Gemini CLI 会增加项目 `CLAUDE.md` 或 `GEMINI.md` 的原生导入桥；已经登记的桥随项目共存，记忆仍只有一套。不从模型名称推断客户端，也不假定任意网页聊天能读取这些文件。
+
+已有相同职责文档时，用 `--context-file`、`--procedures-file`、`--state-file` 指向项目内真实相对路径，例如 `--context-file CONTEXT.md --state-file PROGRESS.md`。先读原件，确认职责适合；不凭文件名把任意文件当成可替换的状态。初始化保留已有正文，接入实际项目规则与所需原生桥。若权威入口是 `AGENTS.override.md`，不能假定其他宿主原生识别它，需由桥、宿主实际项目入口或已生效的全局协议读取。完成后回读改动与配置，报告真实映射及宿主加载是否验证。
 
 ## 开始或继续项目
 
@@ -87,11 +89,13 @@ python3 "<skill-dir>/scripts/project_memory.py" audit --project "<项目根目�
 仅在用户要求安装或修改全局默认时执行，日常项目工作不反复改全局规则：
 
 ```bash
-python3 "<skill-dir>/scripts/install.py" --scope user --enable-global
+python3 "<skill-dir>/scripts/install.py" --agent "<宿主标识>" --scope user --enable-global
 ```
 
-它在用户技能目录安装本包，并保留原文接入 Codex 全局有效规则。全局协议只决定在明确项目首次实质性工作时初始化和后续读取；不后台监听文件夹，也不跨项目合并记忆。项目更具体的规则与退出标记继续生效，宿主指令和实际权限优先。
+安装器的宿主标识为 `codex`、`claude`、`gemini`、`cursor`、`generic`，默认 `generic`。对有官方文件入口的宿主保留原文接入其全局规则；Cursor 的 User Rules 和未指定真实全局文件的 generic 只生成待接入文本，返回仍需完成的动作，不声称已启用。generic 使用 `--global-instructions` 接入显式文件时，也须在实际宿主核对是否加载。不要改应用内部设置库来绕过界面接入。
 
-已有托管安装可用 `--global-only --enable-global` 只接入协议；单项目安装使用 `--scope project --project "<项目根目录>"`，不同时启用全局。撤销默认用 `--disable-global`，保留其他规则、已安装 Skill 和项目记忆。
+全局协议指导明确项目首次实质性工作时初始化和后续读取；不后台监听文件夹，也不跨项目合并记忆。项目更具体的规则与退出标记继续生效，宿主指令和实际权限优先。宿主自己的信任、技能激活或文件访问确认仍按其实际要求执行。
 
-详细安装、无 Git 项目和退出方法见 [README](README.md)；来源与设计边界见 [设计依据](references/design-basis.md)，验收方法见 [接续验证](references/acceptance.md)。独立个人记忆需求使用 [three-layer-memory](https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/%E7%9F%A5%E8%AF%86%E7%AE%A1%E7%90%86/three-layer-memory)。
+已有托管安装可用 `--global-only --enable-global` 加明确 `--agent` 只接入协议；单项目安装使用 `--scope project --project "<项目根目录>"`，不同时启用全局。撤销默认以相同宿主使用 `--disable-global`，原生文件只移除受管块；Cursor 或无全局文件的 generic 需要按返回说明移除界面规则，不把生成说明冒充关闭成功。保留其他规则、已安装 Skill 和项目记忆。
+
+详细安装和退出方法见 [README](README.md)，宿主入口及真实限制见 [多宿主接入](references/hosts.md)；来源与设计边界见 [设计依据](references/design-basis.md)，验收方法见 [接续验证](references/acceptance.md)。独立个人记忆需求使用 [three-layer-memory](https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/%E7%9F%A5%E8%AF%86%E7%AE%A1%E7%90%86/three-layer-memory)。

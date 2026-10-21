@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install project memory locally and optionally enroll Codex global instructions."""
+"""Install portable project memory and enroll the current Agent's rule entry."""
 from __future__ import annotations
 
 import argparse
@@ -68,7 +68,7 @@ def managed(text: str, replacement: str | None) -> str:
     return text + separator + replacement + "\n"
 
 
-def global_block(skill: Path) -> str:
+def global_block(skill: Path, agent: str = "codex") -> str:
     if any(c in str(skill) for c in "\r\n`"):
         raise ValueError("Skill path cannot contain newlines or backticks")
     return f"""{START}
@@ -77,6 +77,9 @@ def global_block(skill: Path) -> str:
 When beginning substantive work in a clearly identified project, use the
 `project-three-layer-memory` Skill at `{skill / 'SKILL.md'}`.
 This applies to software, research, courses, writing and client projects.
+For project initialization use `init --project <exact-project-root> --agent {agent if agent in {'codex', 'claude', 'gemini'} else 'generic'}`.
+Claude Code and Gemini CLI use their native project rule import bridges;
+all hosts share the same project-local memory files.
 
 - Resolve the actual project/workspace root. Never treat a user home, Documents,
   a collection of projects, or a temporary attachment directory as one project.
@@ -100,9 +103,60 @@ This applies to software, research, courses, writing and client projects.
   personal profiles, unrelated project data or whole conversations into it.
 
 This is a default Agent workflow, not a background watcher. A folder created
-outside Codex is initialized only when Codex actually starts working there.
+outside the Agent is initialized only when the Agent actually starts working there.
 Instruction changes take effect on a new run/session; do not claim hot reload.
 {END}"""
+
+
+def layout(args: argparse.Namespace, home: Path) -> tuple[Path, Path, list[Path], dict[Path, bytes | None]]:
+    """Return config root, user Skill root, global candidates and config snapshots."""
+    agent = args.agent
+    if args.codex_home and agent != "codex":
+        raise ValueError("--codex-home is specific to --agent codex")
+    if args.codex_home and args.agent_home:
+        raise ValueError("Use only one of --agent-home and --codex-home")
+    use_env = not args.home and not args.agent_home
+    snapshots = {}
+    if agent == "codex":
+        config = Path(args.codex_home or args.agent_home or (os.environ.get("CODEX_HOME") if use_env else None) or home / ".codex").expanduser().resolve()
+        skills = home / ".agents" / "skills"
+        files = [config / "AGENTS.override.md", config / "AGENTS.md"]
+    elif agent == "claude":
+        config = Path(args.agent_home or (os.environ.get("CLAUDE_CONFIG_DIR") if use_env else None) or home / ".claude").expanduser().resolve()
+        skills = config / "skills"
+        files = [config / "CLAUDE.md"]
+    elif agent == "gemini":
+        gemini_base = Path(os.environ.get("GEMINI_CLI_HOME") or home) if use_env else home
+        config = Path(args.agent_home or gemini_base / ".gemini").expanduser().resolve()
+        skills = config / "skills"
+        settings = config / "settings.json"
+        snapshots[settings] = read(settings)
+        data = json.loads(snapshots[settings].decode("utf-8")) if snapshots[settings] else {}
+        if not isinstance(data, dict) or not isinstance(data.get("context", {}), dict):
+            raise ValueError("Gemini settings and context must be JSON objects")
+        names = data.get("context", {}).get("fileName", "GEMINI.md")
+        names = [names] if isinstance(names, str) else names
+        if not isinstance(names, list) or not names:
+            raise ValueError("Gemini context.fileName must be a name or non-empty name list")
+        for name in names:
+            if not isinstance(name, str) or name in {".", ".."} or not name or any(c in name for c in "/\\:\r\n"):
+                raise ValueError("Gemini context.fileName must contain simple file names")
+        files = [config / name for name in dict.fromkeys(names)]
+    else:
+        if args.agent_home:
+            raise ValueError("--agent-home is for codex, claude or gemini; use --global-instructions for another host")
+        config = home / ".agents"
+        skills = home / (".cursor" if agent == "cursor" else ".agents") / "skills"
+        files = []
+    if config in {Path(config.anchor), home}:
+        raise ValueError("Agent config root must be a dedicated directory")
+    if args.global_instructions:
+        if agent != "generic":
+            raise ValueError("--global-instructions is for --agent generic; native hosts use their documented entries")
+        # Preserve the final component so read() can reject symlink files.
+        files = [Path(os.path.abspath(os.path.expanduser(args.global_instructions)))]
+        config = files[0].parent
+    return config, skills, files, snapshots
 
 
 @contextlib.contextmanager
@@ -136,10 +190,7 @@ def write_atomic(path: Path, content: bytes, previous: bytes | None) -> None:
 
 def run(args: argparse.Namespace) -> dict:
     home = Path(args.home).expanduser().resolve() if args.home else Path.home().resolve()
-    codex_default = os.environ.get("CODEX_HOME") if not args.home else None
-    codex_home = Path(args.codex_home or codex_default or home / ".codex").expanduser().resolve()
-    if codex_home in {Path(codex_home.anchor), home}:
-        raise ValueError("Codex home must be a dedicated configuration directory")
+    config_root, user_skills, global_files, config_snapshots = layout(args, home)
     if args.disable_global and (args.enable_global or args.global_only or args.scope == "project"):
         raise ValueError("--disable-global cannot be combined with installation/global-enrollment options")
     if args.global_only and not args.enable_global:
@@ -153,12 +204,14 @@ def run(args: argparse.Namespace) -> dict:
         broad = {Path(root.anchor), home, home / "Documents", home / "Desktop", home / "Downloads"}
         if root in broad or not root.is_dir():
             raise ValueError("Choose an existing, specific project folder")
+        skill_parent = root / (".claude" if args.agent == "claude" else ".gemini" if args.agent == "gemini" else ".agents") / "skills"
     else:
-        root = home
-    destination = root / ".agents" / "skills" / NAME
+        root = config_root if args.agent in {"claude", "gemini"} else home
+        skill_parent = user_skills
+    destination = skill_parent / NAME
     safe_children(root, destination.parent)
     active_skill = SKILL_DIR if args.global_only else destination
-    result: dict = {"ok": True, "dry_run": args.dry_run, "actions": []}
+    result: dict = {"ok": True, "agent": args.agent, "dry_run": args.dry_run, "actions": []}
     source_hashes = inventory(SKILL_DIR)
     if not (SKILL_DIR / "scripts/project_memory.py").is_file() or "SKILL.md" not in source_hashes:
         raise ValueError("Incomplete Skill package")
@@ -177,35 +230,48 @@ def run(args: argparse.Namespace) -> dict:
         install_action = "skip"
 
     updates = []
-    originals = {}
+    originals = dict(config_snapshots)
+    manual = args.agent in {"cursor", "generic"} and not global_files
+    budget = args.instruction_budget if args.instruction_budget is not None else (32768 if args.agent == "codex" else None)
     if args.enable_global or args.disable_global:
-        # Inspect both files. On removal clear our block from either file, since an
-        # override may have been added after enrollment. Never remove other text.
-        override = codex_home / "AGENTS.override.md"
-        base = codex_home / "AGENTS.md"
-        originals = {path: read(path) for path in (override, base)}
-        effective = override if originals[override] and originals[override].strip() else base
-        targets = list(originals) if args.disable_global else [effective]
+        if manual:
+            if args.disable_global:
+                result.update({"global_enabled": None, "manual_action_required": True, "activation": "remove_the_managed_block_in_host_user_rules", "actions": [{"action": "manual_removal_required", "start_marker": START, "end_marker": END}]})
+                return result
+            export = Path(os.path.abspath(os.path.expanduser(args.rules_output))) if args.rules_output else home / ".agents" / "project-memory-user-rules.md"
+            if not args.rules_output:
+                safe_children(home, export)
+            global_files = [export]
+            result.update({"manual_action_required": True, "rules_output": str(export), "activation": "paste_into_cursor_user_rules" if args.agent == "cursor" else "configure_the_host_to_load_these_rules"})
+        originals.update({path: read(path) for path in global_files})
+        if args.agent == "codex":
+            effective = global_files[0] if originals[global_files[0]] and originals[global_files[0]].strip() else global_files[1]
+        else:
+            effective = global_files[0]
+        targets = list(global_files) if args.disable_global else [effective]
         for path in targets:
             before = originals[path]
             text = (before or b"").decode("utf-8")
             if args.disable_global and START not in text and END not in text:
                 continue
-            after = managed(text, None if args.disable_global else global_block(active_skill)).encode("utf-8")
-            if args.enable_global and len(after) > args.instruction_budget:
+            after = managed(text, None if args.disable_global else global_block(active_skill, args.agent)).encode("utf-8")
+            if args.enable_global and budget is not None and len(after) > budget:
                 raise ValueError(
                     f"Global instructions would be {len(after)} bytes, exceeding the declared "
-                    f"Codex instruction budget ({args.instruction_budget}). Shorten the global "
-                    "file or configure a larger project_doc_max_bytes in Codex and pass the same "
+                    f"instruction budget ({budget}). Shorten the global "
+                    "file or configure a larger instruction budget in the host and pass the same "
                     "value via --instruction-budget. No enrollment was performed."
                 )
             if after != (before or b""):
                 updates.append((path, before, after))
-                result["actions"].append({"action": "remove_global_block" if args.disable_global else "enroll_global", "path": str(path)})
-        result["effective_instructions"] = str(effective)
-        result["activation"] = "new_codex_run_or_session"
-        result["instruction_budget"] = args.instruction_budget
-        result["budget_scope"] = "global_file_only; project instructions share the Codex budget"
+                result["actions"].append({"action": "remove_global_block" if args.disable_global else "prepare_user_rules" if manual else "enroll_global", "path": str(path)})
+        if not manual:
+            result["effective_instructions"] = str(effective)
+            result["activation"] = {"codex": "new_codex_run_or_session", "claude": "new_claude_code_session", "gemini": "memory_reload_and_skills_reload_or_new_session", "generic": "verify_that_the_host_loads_the_explicit_global_file"}[args.agent]
+        result["instruction_budget"] = budget
+        result["host_loading_verified"] = False
+        if args.agent == "codex":
+            result["budget_scope"] = "global_file_only; project instructions share the Codex budget"
     if args.dry_run:
         return result
 
@@ -225,7 +291,7 @@ def run(args: argparse.Namespace) -> dict:
 
     backups = []
     if updates or args.enable_global:
-        with lock(codex_home / ".project-memory-install.lock"):
+        with lock(effective.parent / ".project-memory-install.lock"):
             # The other instruction file can become effective between inspection
             # and this lock. Verify both snapshots, even on an idempotent run.
             for path, before in originals.items():
@@ -245,23 +311,29 @@ def run(args: argparse.Namespace) -> dict:
                     backups.append(str(backup))
                 write_atomic(path, after, before)
     result["backups"] = backups
-    result["global_enabled"] = args.enable_global
+    result["global_enabled"] = bool(args.enable_global and not manual and args.agent != "generic")
+    if args.enable_global and args.agent == "generic":
+        result["manual_action_required"] = True
     return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--agent", choices=["codex", "claude", "gemini", "cursor", "generic"], default="generic", help="Current host; unknown hosts stay generic and require explicit loading")
     parser.add_argument("--scope", choices=["user", "project"], default="user")
     parser.add_argument("--project", help="Exact existing project root for --scope project")
     parser.add_argument("--home", help="Home-like root for installation/testing; defaults to the user's home")
     parser.add_argument("--codex-home", help="Codex config root; otherwise CODEX_HOME or ~/.codex")
-    parser.add_argument("--enable-global", action="store_true", help="Enroll defaults for future Codex projects")
+    parser.add_argument("--agent-home", help="Explicit native config directory (for Gemini this is the .gemini directory)")
+    parser.add_argument("--global-instructions", help="Known global instruction file of a generic host; loading must be verified in that host")
+    parser.add_argument("--rules-output", help="Output file for rules requiring manual host settings (Cursor/generic)")
+    parser.add_argument("--enable-global", action="store_true", help="Enroll native global rules or prepare manual host User Rules")
     parser.add_argument("--global-only", action="store_true", help="Enroll this already managed Skill without copying it")
     parser.add_argument("--disable-global", action="store_true", help="Remove only this Skill's global instruction block")
-    parser.add_argument("--instruction-budget", type=int, default=32768, help="Actual Codex project_doc_max_bytes budget (default 32768); project rules share it")
+    parser.add_argument("--instruction-budget", type=int, help="Actual host instruction budget; default 32768 only for Codex")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    if args.instruction_budget < 1:
+    if args.instruction_budget is not None and args.instruction_budget < 1:
         parser.error("--instruction-budget must be positive")
     try:
         result = run(args)

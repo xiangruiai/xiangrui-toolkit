@@ -341,6 +341,208 @@ class ProjectMemoryTests(unittest.TestCase):
             self.run_cli('init', '--context-file', path, success=False)
         self.assertFalse((self.project / '.project-memory').exists())
 
+    def test_codex_and_generic_do_not_create_other_native_entries(self):
+        self.run_cli('init', '--agent', 'codex')
+        self.run_cli('init', '--agent', 'generic')
+        self.assertFalse((self.project / 'CLAUDE.md').exists())
+        self.assertFalse((self.project / 'GEMINI.md').exists())
+        config = json.loads((self.project / '.project-memory/paths.json').read_text())
+        self.assertNotIn('bridges', config)
+        self.assertEqual(self.run_cli('audit')['bridges'], [])
+
+    def test_claude_bridge_initialization_is_registered_and_audited(self):
+        result = self.run_cli('init', '--agent', 'claude')
+        self.assertEqual(result['mapping']['bridges'], ['claude'])
+        self.assertEqual(list(module.active_imports((self.project / 'CLAUDE.md').read_text())), ['AGENTS.md'])
+        self.assertFalse((self.project / 'GEMINI.md').exists())
+        report = self.run_cli('audit')
+        self.assertTrue(report['bridges_ok'])
+        self.assertEqual(report['bridges'][0]['agent'], 'claude')
+        self.assertEqual(report['bridges'][0]['target'], 'AGENTS.md')
+
+    def test_gemini_bridge_initialization_preserves_native_rules_and_newlines(self):
+        original = '# Gemini rules\r\n\r\nKeep the original guidance.\r\n'.encode()
+        (self.project / 'GEMINI.md').write_bytes(original)
+        self.run_cli('init', '--agent', 'gemini')
+        native = self.project / 'GEMINI.md'
+        self.assertTrue(native.read_bytes().startswith(original))
+        first = native.read_bytes()
+        self.run_cli('init', '--agent', 'gemini')
+        self.assertEqual(native.read_bytes(), first)
+        self.assertEqual(list(module.active_imports(native.read_text())), ['AGENTS.md'])
+        self.assertTrue(self.run_cli('audit')['bridges_ok'])
+
+    def test_native_bridge_dry_run_has_no_side_effects(self):
+        plan = self.run_cli('init', '--agent', 'claude', '--dry-run')
+        self.assertTrue(any(item['path'] == 'CLAUDE.md' for item in plan['actions']))
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_two_native_hosts_share_memory_and_survive_default_reinitialization(self):
+        self.run_cli('init', '--agent', 'claude')
+        first_claude = (self.project / 'CLAUDE.md').read_bytes()
+        self.run_cli('init', '--agent', 'gemini')
+        self.assertEqual((self.project / 'CLAUDE.md').read_bytes(), first_claude)
+        self.init()
+        config = json.loads((self.project / '.project-memory/paths.json').read_text())
+        self.assertEqual(config['bridges'], ['claude', 'gemini'])
+        self.assertEqual(len(self.run_cli('audit')['bridges']), 2)
+        self.assertEqual((self.project / 'CLAUDE.md').read_bytes(), first_claude)
+
+    def test_all_registered_native_imports_follow_effective_override_changes(self):
+        self.run_cli('init', '--agent', 'claude')
+        self.run_cli('init', '--agent', 'gemini')
+        (self.project / 'AGENTS.override.md').write_text('# Temporary project override\n')
+        self.init()
+        for filename in ('CLAUDE.md', 'GEMINI.md'):
+            self.assertEqual(list(module.active_imports((self.project / filename).read_text())), ['AGENTS.override.md'])
+        self.assertTrue(self.run_cli('audit')['bridges_ok'])
+        (self.project / 'AGENTS.override.md').unlink()
+        self.run_cli('init', '--agent', 'codex')
+        for filename in ('CLAUDE.md', 'GEMINI.md'):
+            self.assertEqual(list(module.active_imports((self.project / filename).read_text())), ['AGENTS.md'])
+
+    def test_existing_independent_native_import_is_reused_without_changing_bytes(self):
+        original = b'# Native rules\r\n\r\n@./AGENTS.md\r\n'
+        (self.project / 'CLAUDE.md').write_bytes(original)
+        self.run_cli('init', '--agent', 'claude')
+        self.assertEqual((self.project / 'CLAUDE.md').read_bytes(), original)
+        self.run_cli('init', '--agent', 'claude')
+        self.assertEqual((self.project / 'CLAUDE.md').read_bytes(), original)
+        self.assertTrue(self.run_cli('audit')['bridges_ok'])
+
+    def test_example_native_import_is_not_mistaken_for_an_active_import(self):
+        original = '# Examples\n```md\n<!-- example comment\n@AGENTS.md\n```\n'
+        (self.project / 'GEMINI.md').write_text(original)
+        self.run_cli('init', '--agent', 'gemini')
+        text = (self.project / 'GEMINI.md').read_text()
+        self.assertTrue(text.startswith(original))
+        self.assertEqual(list(module.active_imports(text)), ['AGENTS.md'])
+        self.assertIn(module.bridge_markers('gemini')[0], text)
+
+    def test_malformed_native_bridge_markers_reject_before_project_writes(self):
+        (self.project / 'CLAUDE.md').write_text('# Existing\n' + module.bridge_markers('claude')[0])
+        self.run_cli('init', '--agent', 'claude', success=False)
+        self.assertFalse((self.project / '.project-memory').exists())
+        self.assertFalse((self.project / 'AGENTS.md').exists())
+
+    def test_native_symlink_rejects_before_project_writes(self):
+        outside = self.base / 'outside-native.md'
+        outside.write_text('external rules')
+        try:
+            (self.project / 'GEMINI.md').symlink_to(outside)
+        except OSError as exc:
+            self.skipTest(f'Symlinks unavailable: {exc}')
+        self.run_cli('init', '--agent', 'gemini', success=False)
+        self.assertFalse((self.project / '.project-memory').exists())
+        self.assertFalse((self.project / 'AGENTS.md').exists())
+        self.assertEqual(outside.read_text(), 'external rules')
+
+    def test_unclosed_native_examples_reject_before_project_writes(self):
+        for name, text, agent in (('CLAUDE.md', '# Examples\n```md\n', 'claude'), ('GEMINI.md', '# Comments\n<!-- unfinished', 'gemini')):
+            with self.subTest(agent=agent):
+                (self.project / name).write_text(text)
+                self.run_cli('init', '--agent', agent, success=False)
+                self.assertFalse((self.project / '.project-memory').exists())
+                self.assertFalse((self.project / 'AGENTS.md').exists())
+                self.assertEqual((self.project / name).read_text(), text)
+
+    def test_direct_native_import_cycle_is_rejected_without_pollution(self):
+        (self.project / 'AGENTS.md').write_text('# Shared rules\n@CLAUDE.md\n')
+        self.run_cli('init', '--agent', 'claude', success=False)
+        self.assertFalse((self.project / '.project-memory').exists())
+        self.assertFalse((self.project / 'CLAUDE.md').exists())
+        self.assertEqual((self.project / 'AGENTS.md').read_text(), '# Shared rules\n@CLAUDE.md\n')
+
+    def test_audit_reports_missing_registered_native_bridge(self):
+        self.run_cli('init', '--agent', 'gemini')
+        (self.project / 'GEMINI.md').unlink()
+        report = self.run_cli('audit', success=False)
+        self.assertFalse(report['bridges_ok'])
+        self.assertEqual(report['bridges'][0]['error'], 'native_entry_missing')
+        self.init()
+        self.assertTrue(self.run_cli('audit')['bridges_ok'])
+
+    def test_audit_reports_stale_managed_import_despite_an_independent_new_import(self):
+        self.run_cli('init', '--agent', 'claude')
+        (self.project / 'AGENTS.override.md').write_text('# Override\n')
+        path = self.project / 'CLAUDE.md'
+        path.write_text(path.read_text() + '\n@AGENTS.override.md\n')
+        report = self.run_cli('audit', success=False)
+        self.assertEqual(report['bridges'][0]['error'], 'managed_native_import_outdated')
+        self.init()
+        self.assertTrue(self.run_cli('audit')['bridges_ok'])
+
+    def test_legacy_config_without_bridge_list_remains_usable(self):
+        self.init()
+        config = json.loads((self.project / '.project-memory/paths.json').read_text())
+        self.assertNotIn('bridges', config)
+        self.assertTrue(self.run_cli('resume')['ok'])
+        self.assertTrue(self.run_cli('audit')['bridges_ok'])
+
+    def test_indented_code_import_is_not_reused_as_an_active_import(self):
+        (self.project / 'CLAUDE.md').write_text('# Example\n\n    @AGENTS.md\n')
+        self.run_cli('init', '--agent', 'claude')
+        text = (self.project / 'CLAUDE.md').read_text()
+        self.assertEqual(list(module.active_imports(text)), ['AGENTS.md'])
+        self.assertIn(module.bridge_markers('claude')[0], text)
+
+    def test_hidden_claude_context_and_other_host_entry_are_untouched(self):
+        hidden = self.project / '.claude'
+        hidden.mkdir()
+        (hidden / 'CLAUDE.md').write_text('Keep hidden project context exactly.\n')
+        (self.project / 'GEMINI.md').write_text('Keep Gemini context exactly.\n')
+        self.run_cli('init', '--agent', 'claude')
+        self.assertTrue((self.project / 'CLAUDE.md').is_file())
+        self.assertEqual((hidden / 'CLAUDE.md').read_text(), 'Keep hidden project context exactly.\n')
+        self.assertEqual((self.project / 'GEMINI.md').read_text(), 'Keep Gemini context exactly.\n')
+
+    def test_inline_native_import_cycle_is_rejected_before_any_write(self):
+        for agent, native in (('claude', 'CLAUDE.md'), ('gemini', 'GEMINI.md')):
+            with self.subTest(agent=agent):
+                original = f'Read @{native} for additional user requirements.\n'
+                (self.project / 'AGENTS.md').write_text(original)
+                self.run_cli('init', '--agent', agent, success=False)
+                self.assertFalse((self.project / '.project-memory').exists())
+                self.assertFalse((self.project / native).exists())
+                self.assertEqual((self.project / 'AGENTS.md').read_text(), original)
+
+    def test_audit_detects_preexisting_inline_native_import_cycle(self):
+        self.run_cli('init', '--agent', 'claude')
+        path = self.project / 'AGENTS.md'
+        path.write_text(path.read_text() + '\nRead @CLAUDE.md for additional user requirements.\n')
+        report = self.run_cli('audit', success=False)
+        self.assertFalse(report['bridges_ok'])
+        self.assertEqual(report['bridges'][0]['error'], 'direct_import_cycle')
+
+    def test_inline_native_import_detection_excludes_examples_comments_and_urls(self):
+        text = ('Use `@CLAUDE.md` as an example.\n'
+                'Use ``@CLAUDE.md`` as another example.\n'
+                '<!-- Read @CLAUDE.md only in this hidden comment. -->\n'
+                '```md\nRead @CLAUDE.md in a fenced example.\n```\n'
+                '    Read @CLAUDE.md in an indented code example.\n'
+                'See https://example.test/@CLAUDE.md and https://example.test/?name=@GEMINI.md .\n'
+                'Email helper@CLAUDE.md or use mailto:@GEMINI.md .\n'
+                'See [Claude](CLAUDE.md) and the backup @CLAUDE.md.backup.\n'
+                'Do not mistake @CLAUDE.md/subpath for a root import.\n')
+        self.assertEqual(module.potential_native_imports(text), set())
+        (self.project / 'AGENTS.md').write_text(text)
+        self.run_cli('init', '--agent', 'claude')
+        self.assertTrue(self.run_cli('audit')['bridges_ok'])
+
+    def test_inline_native_import_boundaries_include_relative_names_and_punctuation(self):
+        text = 'Read (@./CLAUDE.md), and reference:@././GEMINI.md.\n'
+        self.assertEqual(module.potential_native_imports(text), {'CLAUDE.md', 'GEMINI.md'})
+        self.assertEqual(module.potential_native_imports('Read @claude.md for case-insensitive file systems.'), {'CLAUDE.md'})
+
+    def test_inline_existing_forward_import_does_not_relax_standalone_reuse(self):
+        original = 'Read @AGENTS.md for project requirements.\n'
+        (self.project / 'CLAUDE.md').write_text(original)
+        self.run_cli('init', '--agent', 'claude')
+        text = (self.project / 'CLAUDE.md').read_text()
+        self.assertTrue(text.startswith(original))
+        self.assertIn(module.bridge_markers('claude')[0], text)
+        self.assertEqual(list(module.active_imports(text)), ['AGENTS.md'])
+
     def test_broad_root_is_refused(self):
         self.run_cli('init', project=Path.home(), success=False)
 

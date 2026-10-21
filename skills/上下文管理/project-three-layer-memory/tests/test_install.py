@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from types import SimpleNamespace
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/install.py"
 SPEC = importlib.util.spec_from_file_location("project_memory_install", SCRIPT)
@@ -20,14 +21,14 @@ class InstallTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.home = self.root / "home"
         self.home.mkdir()
         self.codex = self.home / ".codex"
 
     def command(self, *options, success=True, env=None):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--home", str(self.home), *options],
+            [sys.executable, str(SCRIPT), "--home", str(self.home), "--agent", "codex", *options],
             capture_output=True, text=True, env=env,
         )
         self.assertEqual(result.returncode == 0, success, result.stderr + result.stdout)
@@ -194,7 +195,8 @@ class InstallTests(unittest.TestCase):
         options = installer.argparse.Namespace(
             home=str(self.home), codex_home=None, disable_global=False,
             enable_global=True, global_only=True, scope="user", project=None,
-            dry_run=False, instruction_budget=32768,
+            dry_run=False, instruction_budget=32768, agent="codex",
+            agent_home=None, global_instructions=None, rules_output=None,
         )
         original_lock = installer.lock
 
@@ -214,6 +216,119 @@ class InstallTests(unittest.TestCase):
         project = self.root / "project"
         project.mkdir()
         self.command("--scope", "project", "--project", str(project), "--global-only", "--enable-global", success=False)
+
+    def test_default_unknown_host_only_prepares_rules(self):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--home", str(self.home), "--enable-global"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["agent"], "generic")
+        self.assertFalse(payload["global_enabled"])
+        self.assertTrue(payload["manual_action_required"])
+        self.assertTrue(Path(payload["rules_output"]).is_file())
+        self.assertFalse(self.codex.exists())
+
+    def test_claude_preserves_native_rules_and_does_not_write_codex(self):
+        native = self.home / ".claude/CLAUDE.md"
+        native.parent.mkdir()
+        native.write_bytes(b"# Existing Claude rules\r\n")
+        payload = self.command("--agent", "claude", "--enable-global")
+        self.assertTrue(native.read_bytes().startswith(b"# Existing Claude rules\r\n"))
+        self.assertIn("--agent claude", native.read_text())
+        self.assertTrue((self.home / ".claude/skills" / installer.NAME / "SKILL.md").is_file())
+        self.assertTrue(payload["global_enabled"])
+        self.assertFalse(payload["host_loading_verified"])
+        self.assertFalse(self.codex.exists())
+        self.command("--agent", "claude", "--disable-global")
+        self.assertNotIn(installer.START, native.read_text())
+        self.assertIn("Existing Claude rules", native.read_text())
+
+    def test_gemini_native_defaults(self):
+        payload = self.command("--agent", "gemini", "--enable-global")
+        native = self.home / ".gemini/GEMINI.md"
+        self.assertTrue(native.is_file())
+        self.assertIn("--agent gemini", native.read_text())
+        self.assertTrue((self.home / ".gemini/skills" / installer.NAME).is_dir())
+        self.assertTrue(payload["global_enabled"])
+        self.assertFalse(self.codex.exists())
+
+    def test_gemini_custom_context_filename(self):
+        native_root = self.home / ".gemini"
+        native_root.mkdir()
+        (native_root / "settings.json").write_text(json.dumps({"context": {"fileName": ["TEAM.md", "GEMINI.md"]}}))
+        payload = self.command("--agent", "gemini", "--enable-global")
+        self.assertEqual(Path(payload["effective_instructions"]), native_root / "TEAM.md")
+        self.assertTrue((native_root / "TEAM.md").is_file())
+        self.assertFalse((native_root / "GEMINI.md").exists())
+
+    def test_invalid_gemini_settings_fail_before_copy(self):
+        native_root = self.home / ".gemini"
+        native_root.mkdir()
+        settings = native_root / "settings.json"
+        for data in [["invalid"], {"context": {"fileName": "../outside.md"}}, {"context": []}]:
+            settings.write_text(json.dumps(data))
+            self.command("--agent", "gemini", "--enable-global", success=False)
+            self.assertFalse((native_root / "skills").exists())
+
+    def test_cursor_exports_user_rules_without_claiming_activation(self):
+        payload = self.command("--agent", "cursor", "--enable-global")
+        self.assertFalse(payload["global_enabled"])
+        self.assertTrue(payload["manual_action_required"])
+        exported = Path(payload["rules_output"])
+        self.assertIn(installer.START, exported.read_text())
+        self.assertTrue((self.home / ".cursor/skills" / installer.NAME).is_dir())
+        self.assertFalse((self.home / ".cursor/rules").exists())
+        self.assertFalse(self.codex.exists())
+
+    def test_cursor_disable_reports_manual_action_and_preserves_files(self):
+        self.command("--agent", "cursor", "--enable-global")
+        before = {p.relative_to(self.home).as_posix(): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
+        payload = self.command("--agent", "cursor", "--disable-global")
+        after = {p.relative_to(self.home).as_posix(): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
+        self.assertTrue(payload["manual_action_required"])
+        self.assertIsNone(payload["global_enabled"])
+        self.assertEqual(before, after)
+
+    def test_generic_explicit_global_file_is_not_claimed_loaded(self):
+        global_file = self.root / "other-agent/WORKING.md"
+        payload = self.command("--agent", "generic", "--global-instructions", str(global_file), "--enable-global")
+        self.assertIn(installer.START, global_file.read_text())
+        self.assertFalse(payload["global_enabled"])
+        self.assertTrue(payload["manual_action_required"])
+        self.assertFalse(payload["host_loading_verified"])
+        self.command("--agent", "generic", "--global-instructions", str(global_file), "--disable-global")
+        self.assertNotIn(installer.START, global_file.read_text())
+
+    def test_dry_run_manual_rules_creates_nothing(self):
+        payload = self.command("--agent", "cursor", "--enable-global", "--dry-run")
+        self.assertTrue(payload["manual_action_required"])
+        self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_claude_and_gemini_project_skill_paths(self):
+        for agent, folder in [("claude", ".claude"), ("gemini", ".gemini")]:
+            project = self.root / (agent + "-project")
+            project.mkdir()
+            self.command("--agent", agent, "--scope", "project", "--project", str(project))
+            self.assertTrue((project / folder / "skills" / installer.NAME).is_dir())
+            self.assertFalse((project / ".agents").exists())
+
+    def test_configured_home_semantics(self):
+        args = SimpleNamespace(agent="claude", home=None, codex_home=None, agent_home=None, global_instructions=None)
+        custom = self.root / "claude-custom"
+        with mock.patch.dict(installer.os.environ, {"CLAUDE_CONFIG_DIR": str(custom)}):
+            config, skills, files, _ = installer.layout(args, self.home)
+        self.assertEqual(config, custom)
+        self.assertEqual(skills, custom / "skills")
+        self.assertEqual(files, [custom / "CLAUDE.md"])
+        args.agent = "gemini"
+        custom = self.root / "gemini-home"
+        with mock.patch.dict(installer.os.environ, {"GEMINI_CLI_HOME": str(custom)}):
+            config, skills, files, _ = installer.layout(args, self.home)
+        self.assertEqual(config, custom / ".gemini")
+        self.assertEqual(skills, custom / ".gemini/skills")
+
+    def test_codex_option_is_rejected_for_other_hosts(self):
+        self.command("--agent", "claude", "--codex-home", str(self.codex), success=False)
+        self.assertEqual(list(self.home.iterdir()), [])
 
 
 if __name__ == "__main__":

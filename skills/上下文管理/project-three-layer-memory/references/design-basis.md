@@ -44,6 +44,16 @@ Skill 先提供名称和描述，选用后再读正文，资源按需读取。Co
 
 据此：包名与元数据保持一致；Python 脚本承担路径、初始化、写入和冲突检查等可确定行为；模型负责根据任务与来源判断信息职责。保持独立组件许可证，安装不依赖某个作者的本机目录或账户。
 
+### 6. 各宿主官方规则与技能入口
+
+Claude Code：[Memory](https://code.claude.com/docs/en/memory)、[Skills](https://code.claude.com/docs/en/skills)、[Settings](https://code.claude.com/docs/en/settings)。用户 `CLAUDE.md`、项目入口、原生 `@` 导入和 Skill 各有作用范围；当前版本能直接读取 AGENTS 的条件与其他版本不同。
+
+Gemini CLI：[GEMINI.md](https://geminicli.com/docs/cli/gemini-md/)、[Skills](https://geminicli.com/docs/cli/using-agent-skills/)、[Configuration](https://geminicli.com/docs/reference/configuration/)。层级上下文支持导入，文件名可以配置；用户环境根、原生配置目录与项目 Skill 位置不能混用。
+
+Cursor：[Rules](https://cursor.com/docs/rules)、[Rules help](https://cursor.com/help/customization/rules)、[Skills](https://cursor.com/help/customization/skills)。项目 AGENTS 与 Skill 路径有官方契约；跨项目 User Rules 通过宿主界面配置，不能把通用全局文件方案套过去。
+
+据此：安装器默认 `generic`，由 Agent 依据真实执行环境显式选择宿主。项目记忆保持单一来源，Claude/Gemini 的原生入口只作导入桥。没有可靠可写全局文件的宿主，生成待接入文本并明确未启用；自定义全局文件写入也保留“宿主加载未验证”。具体入口和限制见 [多宿主接入](hosts.md)。
+
 ## 本工具作出的设计选择
 
 ### 项目范围明确
@@ -62,9 +72,11 @@ Skill 先提供名称和描述，选用后再读正文，资源按需读取。Co
 
 安装者明确启用后，全局规则指导 Agent 在明确项目首次实质性工作时接入记忆。它不是文件夹监听服务，不在所有磁盘目录后台建文件。简单问答和只读请求不自动初始化。项目更具体的要求及 `.project-memory-disabled` 可关闭默认行为。
 
+这依赖该宿主实际加载全局协议。Codex、Claude Code 和 Gemini CLI 采用各自原生文件；Cursor 等需要界面接入时，只生成文本不算完成。纯网页聊天、未挂载项目的云端会话或未部署 Skill 的远程机器，不因为本地安装就具备同样能力。
+
 ### 已有授权与来源
 
-用户已经要求处理项目，就可以在该范围内保存实际进展；无需为每次记忆写入增加一次批准。用户明确的决定与实际验证结果保留不同状态，猜测和未兑现承诺标作待核实。记忆不能替代当前权限、授权或业务验收。错误、状态冲突和只读路径要如实报告，不改写其他项目或用户个人档案来绕过。
+用户已经要求处理项目，就可以在该范围内保存实际进展；无需为每次记忆写入增加一次形式批准。宿主原生的信任、技能激活和文件权限仍须满足。用户明确的决定与实际验证结果保留不同状态，猜测和未兑现承诺标作待核实。记忆不能替代当前权限、授权或业务验收。错误、状态冲突和只读路径要如实报告，不改写其他项目或用户个人档案来绕过。
 
 ### 安装可检查、可退出
 

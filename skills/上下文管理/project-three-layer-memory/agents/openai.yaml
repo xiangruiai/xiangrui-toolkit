@@ -1,4 +1,4 @@
 interface:
   display_name: "项目级三层记忆"
-  short_description: "在项目文件夹保存背景、方法与历史交接，让新对话接着处理项目"
+  short_description: "在项目文件夹保存三层记忆，适配本地 Agent，让新对话继续工作"
   default_prompt: "使用 $project-three-layer-memory 读取当前项目的记忆与未完成事项，复用已有文档，在已有授权内继续项目并保存实际进展。"
