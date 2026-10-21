@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 macOS 安装包（DeepSeek Harness 桌面壳）+ 1 个 CLI（vchat 微信本地数据工具）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 18 个 Skill（按领域分 7 类）+ 公开内容归档。
+> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 macOS 安装包（DeepSeek Harness 桌面壳）+ 1 个 CLI（vchat 微信本地数据工具）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 19 个 Skill（按领域分 8 类）+ 公开内容归档。
 
 ---
 
@@ -42,9 +42,11 @@ xiangrui-toolkit/
 │   └── xiangrui-hud/                 ← Claude Code 实时状态栏 HUD（翠影绿主题，fork 自 claude-hud）
 ├── archives/
 │   └── group-daily/xiangrui-community/ ← 社区群日报脱敏公开归档
-└── skills/                              ← 18 个 Skill，按领域分 7 类
+└── skills/                              ← 19 个 Skill，按领域分 8 类
     ├── Agent能力/
     │   └── discover-local-capabilities/ 完整扫描本机能力并建立自然语言路由闭环
+    ├── 上下文管理/
+    │   └── project-three-layer-memory/  项目三层记忆、跨对话接续与 Codex 全局默认接入
     ├── 知识管理/
     │   ├── three-layer-memory/          三层个人记忆系统
     │   └── knowledge-system-maintainer/ 只读审计与受控改进知识系统
@@ -168,7 +170,17 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 
 ## 6. Skills
 
-18 个 Skill 按领域分 7 类，分别归在 `skills/<领域>/` 下，可单独取用。
+19 个 Skill 按领域分 8 类，分别归在 `skills/<领域>/` 下，可单独取用。
+
+### 上下文管理
+
+| Skill | 用途 | 详情 |
+|---|---|---|
+| `project-three-layer-memory` | **项目级三层记忆**：将项目画像、可复用方法、当前交接与历史事件保存在项目文件夹中；适用于开发、课程、研究、写作和客户交付。支持 Codex 全局默认接入，新项目首次工作时初始化，新对话读取项目文件继续处理。 | [README](skills/上下文管理/project-three-layer-memory/README.md) |
+
+安装并为后续项目启用的提示词：
+
+> 请安装本仓库 `skills/上下文管理/project-three-layer-memory` 中的 Skill，并启用 Codex 全局项目记忆默认规则。保留我原有的全局规则，遇到已有项目文档先复用。完成后检查安装和全局接入，再在当前明确的项目中验证接续。
 
 ### 🤖 Agent 能力
 
