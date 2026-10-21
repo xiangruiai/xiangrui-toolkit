@@ -202,18 +202,41 @@ def active_imports(text):
     return iter(markdown_context(text)['imports'])
 
 
-def potential_native_imports(text):
-    """Conservatively detect direct root-native @imports, including prose."""
+def import_path_candidates(text):
+    """Extract unquoted @paths without treating examples or URLs as imports."""
     visible = markdown_context(text)['visible_text']
-    # Native imports can appear inline, but examples in backtick code spans and
-    # ordinary URL/email addresses must not be interpreted as local imports.
     visible = re.sub(r'(`+).*?\1', ' ', visible, flags=re.S)
+    visible = re.sub(r"(?<!\w)([\"'])(?:(?!\1)[^\n])*?\1", ' ', visible)
     visible = re.sub(r'\b(?:[A-Za-z][A-Za-z0-9+.-]*://|mailto:)[^\s<>]+', ' ', visible, flags=re.I)
-    names = '|'.join(re.escape(name) for name in BRIDGE_FILES.values())
-    pattern = (r'(?<![\w@/\\.-])@(?:\./)*(' + names +
-               r')(?=$|[\s,;:!?()\[\]{}<>\"\']|\.(?=\s|$))')
-    canonical = {name.casefold(): name for name in BRIDGE_FILES.values()}
-    return {canonical[match.group(1).casefold()] for match in re.finditer(pattern, visible, re.I)}
+    token = re.compile(r"(?<![\w@/\\.-])@((?:\\[ \t]|[^\s\"'`<>()\[\]{},;!?])+)")
+    for match in token.finditer(visible):
+        yield match.group(1).rstrip('.,;:!?)]}>，。；：！？*')
+
+
+def potential_native_imports(text, project, rule_directory=None):
+    """Resolve candidate paths to detect direct imports of this project's bridges."""
+    project = project.resolve()
+    base = (rule_directory or project).resolve()
+    native_names = {name.casefold(): name for name in BRIDGE_FILES.values()}
+    found = set()
+    for raw in import_path_candidates(text):
+        # Preserve Windows separators while decoding shell-style escaped spaces.
+        value = re.sub(r'\\([ \t])', r'\1', raw).replace('\\', '/')
+        try:
+            path = Path(value).expanduser()
+            path = (path if path.is_absolute() else base / path).resolve(strict=False)
+            name = native_names.get(path.name.casefold())
+            if name is None:
+                continue
+            same_parent = path.parent == project
+            if not same_parent and path.parent.is_dir():
+                same_parent = path.parent.samefile(project)
+            if same_parent:
+                found.add(name)
+        except (OSError, ValueError, RuntimeError):
+            # Invalid or cyclic symlink aliases are not interpreted as evidence.
+            continue
+    return found
 
 
 def bridge_markers(agent):
@@ -236,7 +259,7 @@ def bridge_plan(project, config, instructions, instruction_text):
             updated = original
         elif start not in original and (context['unclosed_fence'] or context['unclosed_comment']):
             raise ValueError(f'Cannot append a native import inside an unclosed code fence/comment in {BRIDGE_FILES[agent]}')
-        if BRIDGE_FILES[agent] in potential_native_imports(instruction_text):
+        if BRIDGE_FILES[agent] in potential_native_imports(instruction_text, project, instructions.parent):
             raise ValueError(f'Direct native import cycle: {target} imports {BRIDGE_FILES[agent]}')
         if target not in set(active_imports(updated)):
             raise ValueError(f'Native import would be hidden by an unclosed code fence/comment in {BRIDGE_FILES[agent]}')
@@ -260,7 +283,7 @@ def audit_bridges(project, config, instructions, instruction_text):
                 own_imports = set(active_imports(text[text.index(start):text.index(end)])) if start in text else None
                 if own_imports is not None and own_imports != {instructions.name}:
                     report['error'] = 'managed_native_import_outdated'
-                elif filename in potential_native_imports(instruction_text):
+                elif filename in potential_native_imports(instruction_text, project, instructions.parent):
                     report['error'] = 'direct_import_cycle'
                 elif instructions.name not in set(active_imports(text)):
                     report['error'] = 'effective_instruction_import_missing_or_hidden'

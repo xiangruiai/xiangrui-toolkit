@@ -524,15 +524,15 @@ class ProjectMemoryTests(unittest.TestCase):
                 'Email helper@CLAUDE.md or use mailto:@GEMINI.md .\n'
                 'See [Claude](CLAUDE.md) and the backup @CLAUDE.md.backup.\n'
                 'Do not mistake @CLAUDE.md/subpath for a root import.\n')
-        self.assertEqual(module.potential_native_imports(text), set())
+        self.assertEqual(module.potential_native_imports(text, self.project), set())
         (self.project / 'AGENTS.md').write_text(text)
         self.run_cli('init', '--agent', 'claude')
         self.assertTrue(self.run_cli('audit')['bridges_ok'])
 
     def test_inline_native_import_boundaries_include_relative_names_and_punctuation(self):
         text = 'Read (@./CLAUDE.md), and reference:@././GEMINI.md.\n'
-        self.assertEqual(module.potential_native_imports(text), {'CLAUDE.md', 'GEMINI.md'})
-        self.assertEqual(module.potential_native_imports('Read @claude.md for case-insensitive file systems.'), {'CLAUDE.md'})
+        self.assertEqual(module.potential_native_imports(text, self.project), {'CLAUDE.md', 'GEMINI.md'})
+        self.assertEqual(module.potential_native_imports('Read @claude.md for case-insensitive file systems.', self.project), {'CLAUDE.md'})
 
     def test_inline_existing_forward_import_does_not_relax_standalone_reuse(self):
         original = 'Read @AGENTS.md for project requirements.\n'
@@ -542,6 +542,79 @@ class ProjectMemoryTests(unittest.TestCase):
         self.assertTrue(text.startswith(original))
         self.assertIn(module.bridge_markers('claude')[0], text)
         self.assertEqual(list(module.active_imports(text)), ['AGENTS.md'])
+
+    def test_absolute_native_import_cycle_is_rejected_before_writes(self):
+        project = self.base / 'absolute-project'
+        project.mkdir()
+        native = project / 'CLAUDE.md'
+        original = f'Read @{native.as_posix()} for requirements.\n'
+        (project / 'AGENTS.md').write_text(original)
+        self.run_cli('init', '--agent', 'claude', project=project, success=False)
+        self.assertFalse((project / '.project-memory').exists())
+        self.assertFalse(native.exists())
+        self.assertEqual((project / 'AGENTS.md').read_text(), original)
+
+    def test_absolute_escaped_space_native_import_cycle_is_rejected(self):
+        alias = (self.project / 'CLAUDE.md').as_posix().replace(' ', '\\ ')
+        (self.project / 'AGENTS.md').write_text(f'Read @{alias} for requirements.\n')
+        self.run_cli('init', '--agent', 'claude', success=False)
+        self.assertFalse((self.project / '.project-memory').exists())
+        self.assertFalse((self.project / 'CLAUDE.md').exists())
+
+    def test_normalized_relative_native_aliases_are_rejected_without_writes(self):
+        aliases = ('./scratch/../CLAUDE.md',
+                   ('../' + self.project.name + '/CLAUDE.md').replace(' ', '\\ '),
+                   '.\\scratch\\..\\CLAUDE.md')
+        for alias in aliases:
+            with self.subTest(alias=alias):
+                original = f'Read @{alias} for requirements.\n'
+                (self.project / 'AGENTS.md').write_text(original)
+                self.run_cli('init', '--agent', 'claude', success=False)
+                self.assertFalse((self.project / '.project-memory').exists())
+                self.assertFalse((self.project / 'CLAUDE.md').exists())
+                self.assertEqual((self.project / 'AGENTS.md').read_text(), original)
+
+    def test_audit_detects_absolute_and_normalized_native_import_cycles(self):
+        self.run_cli('init', '--agent', 'claude')
+        path = self.project / 'AGENTS.md'
+        original = path.read_text()
+        aliases = ((self.project / 'CLAUDE.md').as_posix().replace(' ', '\\ '), './unused/../CLAUDE.md')
+        for alias in aliases:
+            with self.subTest(alias=alias):
+                path.write_text(original + f'\nRead @{alias} for requirements.\n')
+                report = self.run_cli('audit', success=False)
+                self.assertEqual(report['bridges'][0]['error'], 'direct_import_cycle')
+
+    def test_same_project_symlink_alias_is_detected_without_following_document_content(self):
+        alias = self.base / 'project-alias'
+        try:
+            alias.symlink_to(self.project, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest(f'Symlinks unavailable: {exc}')
+        (self.project / 'AGENTS.md').write_text('Read @../project-alias/CLAUDE.md for requirements.\n')
+        self.run_cli('init', '--agent', 'claude', success=False)
+        self.assertFalse((self.project / '.project-memory').exists())
+        self.assertFalse((self.project / 'CLAUDE.md').exists())
+
+    def test_quoted_native_path_examples_are_not_interpreted_as_imports(self):
+        absolute = (self.project / 'CLAUDE.md').as_posix()
+        examples = (f'Read "@{absolute}" as an example.\n'
+                    f'Example: @"{absolute}"\n'
+                    "Read '@CLAUDE.md' as another example.\n"
+                    'Use ``@./CLAUDE.md`` and `@./unused/../CLAUDE.md` as examples.\n')
+        self.assertEqual(module.potential_native_imports(examples, self.project), set())
+        (self.project / 'AGENTS.md').write_text(examples)
+        self.run_cli('init', '--agent', 'claude')
+        self.assertTrue(self.run_cli('audit')['bridges_ok'])
+
+    def test_native_import_resolution_uses_rule_location_and_keeps_other_projects_distinct(self):
+        subdir = self.project / 'instructions'
+        subdir.mkdir()
+        self.assertEqual(module.potential_native_imports('Read @../CLAUDE.md for rules.', self.project, subdir), {'CLAUDE.md'})
+        outside = self.base / 'another-project'
+        outside.mkdir()
+        self.assertEqual(module.potential_native_imports(f'Read @{outside.as_posix()}/CLAUDE.md for rules.', self.project), set())
+        self.assertEqual(module.potential_native_imports('Read @./CLAUDE.md.backup and @./CLAUDE.md/subpath.', self.project), set())
 
     def test_broad_root_is_refused(self):
         self.run_cli('init', project=Path.home(), success=False)
