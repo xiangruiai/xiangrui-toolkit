@@ -94,16 +94,16 @@ def cmd_corpus(args):
     from vchat_core.output import emit
     try:
         if args.action == 'stats':
-            value = corpus.stats(DATA_DIR, since=args.since, until=args.until)
+            value = corpus.stats(DATA_DIR, since=args.since, until=args.until, conversation=args.conversation)
         elif args.stream or args.pages is not None:
-            for value in corpus.iter_export(DATA_DIR, cursor=args.cursor, limit=args.limit, pages=args.pages, since=args.since, until=args.until):
+            for value in corpus.iter_export(DATA_DIR, cursor=args.cursor, limit=args.limit, pages=args.pages, since=args.since, until=args.until, conversation=args.conversation):
                 # One complete JSON frame per line; flush lets the receiver
                 # durably commit this page before requesting/reading the next.
                 sys.stdout.write(json.dumps(value, ensure_ascii=False, separators=(',', ':')) + '\n')
                 sys.stdout.flush()
             return
         else:
-            value = corpus.export(DATA_DIR, cursor=args.cursor, limit=args.limit, since=args.since, until=args.until)
+            value = corpus.export(DATA_DIR, cursor=args.cursor, limit=args.limit, since=args.since, until=args.until, conversation=args.conversation)
     except (RuntimeError, OSError, ValueError, sqlite3.Error) as error:
         # Do not echo arbitrary DB text or SQLite identifiers as diagnostics.
         message = str(error) if isinstance(error, RuntimeError) else '微信语料快照读取失败或达到时限，未推进导出游标'
@@ -440,17 +440,22 @@ def cmd_files(args):
     target_tables = [tables[kind]] if kind != "all" else list(tables.values())
 
     cfg_path = PROJECT_DIR / "config.json"
-    if cfg_path.exists():
-        cfg = json.loads(cfg_path.read_text())
-        wxid_dir = _P(cfg["db_dir"]).parent
+    cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    if cfg.get('db_dir'):
+        storage = _P(cfg['db_dir'])
     else:
         from vchat_core.decrypt_pipeline import find_db_storage
         storage = find_db_storage()
         if storage is None:
             print("无法定位当前账号 db_storage，附件路径不可用", file=sys.stderr)
             sys.exit(2)
-        cfg = {}
-        wxid_dir = storage.parent
+    from vchat_core.snapshot import active
+    snapshot = active(DATA_DIR)
+    source_id = 'wechat-local-source:' + hashlib.sha256(str(storage.resolve()).encode()).hexdigest()
+    if snapshot and snapshot['source_identity']['id'] != source_id:
+        print('附件账号与当前快照来源不一致，停止读取', file=sys.stderr)
+        sys.exit(69)
+    wxid_dir = storage.parent
     aes_key = cfg.get("image_aes_key")
     xor_key = cfg.get("image_xor_key", 0x88)
 
@@ -482,6 +487,19 @@ def cmd_files(args):
     if not all_items:
         print(f"{ctx['display_name']} 没有匹配的 {kind} 类型附件")
         return
+
+    if getattr(args, 'recover_image_key', False):
+        from vchat_core.image_recovery import recover_image_key
+        selected = all_items[:args.n] if args.n is not None else all_items
+        samples = [item[5] for item in selected
+                   if item[0] == 'image_hardlink_info_v4' and item[5].is_file()]
+        result = recover_image_key(samples, cfg_path,
+                                   Path(__file__).resolve().parent / 'vchat_native/find_image_key_macos')
+        print('图片密钥恢复: ' + json.dumps(result, ensure_ascii=False))
+        if result['status'] not in ('recovered', 'key-already-configured'):
+            sys.exit(77 if result['status'] == 'process-read-denied' else 69)
+        cfg = json.loads(cfg_path.read_text())
+        aes_key = cfg.get('image_aes_key')
 
     if not args.export:
         print(f"{ctx['display_name']} 的附件（共 {len(all_items)} 项）:\n")
@@ -1562,6 +1580,33 @@ def cmd_tags(args):
         print("\n注：基于 extra_buffer protobuf 启发式扫描；精确度有限。")
 
 
+def cmd_shared_history(args):
+    """Resolve only the history attachment referenced by one group message."""
+    import hashlib
+    from vchat_core.contacts import resolve_chat_context
+    from vchat_core.decrypt_pipeline import find_db_storage
+    from vchat_core.shared_history import inspect_shared_history
+    from vchat_core.snapshot import active
+    ctx = resolve_chat_context(args.group)
+    if not ctx or not ctx['username'].endswith('@chatroom'):
+        print('必须提供可解析的群聊', file=sys.stderr)
+        sys.exit(2)
+    cfg_path = DATA_DIR / 'config.json'
+    cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    storage = Path(cfg['db_dir']) if cfg.get('db_dir') else find_db_storage()
+    if storage is None:
+        print('当前账号数据目录不可用', file=sys.stderr)
+        sys.exit(69)
+    snapshot = active(DATA_DIR)
+    identity = 'wechat-local-source:' + hashlib.sha256(str(storage.resolve()).encode()).hexdigest()
+    if not snapshot or snapshot['source_identity']['id'] != identity:
+        print('账号目录与当前快照来源不一致，停止读取附件', file=sys.stderr)
+        sys.exit(69)
+    result = inspect_shared_history(ctx['username'], args.local_id, storage.parent,
+                                    output_dir=args.output if args.export else None)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def cmd_group_info(args):
     """群详情：群主 + 公告 + 公告作者 + 公告时间 + 成员数"""
     check_freshness()
@@ -2568,6 +2613,8 @@ def main():
     sp.add_argument("--match", action="append", default=[],
                     help="仅匹配附件文件名的 MD5 前缀；可重复指定，作用于列表和导出")
     sp.add_argument("--export", action="store_true", help="解密并导出（不带就只列表）")
+    sp.add_argument("--recover-image-key", action="store_true",
+                    help="用所选聊天图片验证并恢复图片密钥；不重启、不改签、不提升权限")
     sp.add_argument("-o", "--output", help="export 输出目录")
     sp.add_argument("-n", type=int)
     sp.set_defaults(func=cmd_files)
@@ -2688,7 +2735,7 @@ def main():
     sp.set_defaults(func=cmd_key)
 
     sp = sub.add_parser("decrypt", help="解密微信本地 db")
-    sp.add_argument('--snapshot-root', help='将本次解密结果隔离发布到快照根目录（默认 ~/.vchat/snapshots，可用 VCHAT_SNAPSHOT_ROOT 覆盖）')
+    sp.add_argument('--snapshot-root', help='将新副本隔离发布到固定 Agent Home 微信运行目录')
     sp.set_defaults(func=cmd_decrypt)
 
     sp = sub.add_parser("watch", help="实时监听新消息（tail -f 风格）")
@@ -2717,6 +2764,13 @@ def main():
     sp.add_argument("--local-id", type=int)
     sp.add_argument("-n", type=int)
     sp.set_defaults(func=cmd_msg_resource)
+
+    sp = sub.add_parser('shared-history', help='按群和入群通知查询本地共享历史附件')
+    sp.add_argument('group', help='精确群 ID 或可唯一解析的群名')
+    sp.add_argument('--local-id', type=int, required=True, help='包含共享历史链接的本地消息 ID')
+    sp.add_argument('--export', action='store_true', help='导出通过消息内长度和 MD5 校验的内容')
+    sp.add_argument('-o', '--output', help='验证后文件的导出目录，配合 --export')
+    sp.set_defaults(func=cmd_shared_history)
 
     sp = sub.add_parser("sns-ads", help="朋友圈广告记录")
     sp.add_argument("-n", type=int)
@@ -2801,10 +2855,12 @@ def main():
     sp = sub.add_parser('corpus', help='完整快照语料统计及可中断分页导出（原生 JSON）')
     cp = sp.add_subparsers(dest='action', required=True)
     stats_parser = cp.add_parser('stats', help='统计全部已发布消息分片的条数与时间跨度')
+    stats_parser.add_argument('--conversation', default=None, help='只统计精确联系人或群聊 ID；不读取其他会话消息表')
     stats_parser.add_argument('--since', default=None, help='含时区 ISO 时间，包含创建时间起点；省略表示无下界')
     stats_parser.add_argument('--until', default=None, help='含时区 ISO 时间，不包含创建时间终点；省略表示无上界')
     stats_parser.set_defaults(func=cmd_corpus)
     export_parser = cp.add_parser('export', help='分页遍历全部消息表；页数不限制总语料')
+    export_parser.add_argument('--conversation', default=None, help='只导出精确联系人或群聊 ID；与游标绑定，不扫描其他会话消息表')
     export_parser.add_argument('--cursor', default=None, help='上一页 next_cursor；仅对同一快照有效')
     export_parser.add_argument('--limit', type=int, default=1000, help='单页最多条数（1—1000）')
     export_parser.add_argument('--stream', action='store_true', help='单进程 NDJSON 逐页导出，直到读完或主动停止')
@@ -2823,7 +2879,7 @@ def main():
     if args.no_color:
         disable_color()
 
-    NATIVE_JSON = {"ls", "info", "doctor", "group-members", "history", "decrypt", "corpus"}
+    NATIVE_JSON = {"ls", "info", "doctor", "group-members", "history", "decrypt", "corpus", "shared-history"}
 
     def _run(args):
         if not getattr(args, "json_out", False) or args.cmd in NATIVE_JSON:

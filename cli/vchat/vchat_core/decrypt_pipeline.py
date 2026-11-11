@@ -16,6 +16,8 @@ import os
 import platform
 import subprocess
 import sys
+import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -171,7 +173,70 @@ def match_keys_to_dbs(candidates: List[str], dbs: List[Path],
     return found
 
 
-def decrypt_all(db_storage: Path, key_map: Dict[str, str], out_root: Path) -> Dict[str, dict]:
+class _UnstableSource(RuntimeError):
+    pass
+
+
+def _capture_encrypted_db(source: Path, target: Path):
+    """Copy one stable encrypted DB, without keeping a live source open to decrypt."""
+    from .snapshot import fingerprint
+    before = fingerprint(source)
+    fd = os.open(source, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+    try:
+        opened = os.fstat(fd)
+        signature = [opened.st_dev, opened.st_ino, opened.st_size,
+                     opened.st_mtime_ns, opened.st_ctime_ns]
+        if signature != before:
+            raise _UnstableSource('source changed before capture')
+        with os.fdopen(fd, 'rb', closefd=False) as inp, target.open('xb') as out:
+            remaining = before[2]
+            while remaining:
+                chunk = inp.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise _UnstableSource('source truncated during capture')
+                out.write(chunk)
+                remaining -= len(chunk)
+        after = os.fstat(fd)
+        signature = [after.st_dev, after.st_ino, after.st_size,
+                     after.st_mtime_ns, after.st_ctime_ns]
+        if signature != before or fingerprint(source) != before:
+            raise _UnstableSource('source changed during capture')
+    finally:
+        os.close(fd)
+    if target.stat().st_size != before[2]:
+        raise _UnstableSource('capture size mismatch')
+    return before
+
+
+def _decrypt_stable_db(source: Path, target: Path, key_hex: str,
+                       scratch_root: Path, attempts: int = 3) -> dict:
+    """Retry only the short capture window; authenticate all captured pages."""
+    from .snapshot import fingerprint
+    for attempt in range(1, attempts + 1):
+        try:
+            with tempfile.TemporaryDirectory(prefix='.vchat-capture-', dir=scratch_root) as temp:
+                captured = Path(temp) / 'source.db'
+                original = _capture_encrypted_db(source, captured)
+                info = crypto.decrypt_db(captured, target, key_hex)
+                produced = fingerprint(target)
+                if info.get('verified') is not True or produced[2] != original[2]:
+                    raise ValueError('decrypted output was not fully verified')
+                return {'ok': True, **info, 'capture_attempts': attempt,
+                        'stable_capture': {'version': 1, 'source': original, 'output': produced}}
+        except Exception as error:
+            if target.exists():
+                # Only remove our exclusive generation's regular output.
+                fingerprint(target)
+                target.unlink()
+            reason = 'source-unstable' if isinstance(error, _UnstableSource) else 'decryption-failed'
+            if attempt == attempts:
+                return {'ok': False, 'reason': reason, 'err': str(error), 'capture_attempts': attempt}
+            time.sleep(0.05 * attempt)
+    raise RuntimeError('invalid capture attempt limit')
+
+
+def decrypt_all(db_storage: Path, key_map: Dict[str, str], out_root: Path,
+                stable_capture: bool = False) -> Dict[str, dict]:
     """按 key 解所有 db，输出到 out_root/<rel>。"""
     results = {}
     out_root.mkdir(parents=True, exist_ok=True)
@@ -179,6 +244,9 @@ def decrypt_all(db_storage: Path, key_map: Dict[str, str], out_root: Path) -> Di
         enc_path = Path(enc_path_str)
         rel = enc_path.relative_to(db_storage)
         out_path = out_root / rel
+        if stable_capture:
+            results[str(rel)] = _decrypt_stable_db(enc_path, out_path, key_hex, out_root.parent)
+            continue
         try:
             info = crypto.decrypt_db(enc_path, out_path, key_hex)
             results[str(rel)] = {"ok": True, **info}
@@ -284,7 +352,11 @@ def full_pipeline(scanner: Path, data_dir: Path,
     # 解密所有
     actual_output = output_root if output_root is not None else data_dir / 'decrypted'
     print(f"▶ 解密 → {actual_output}", file=sys.stderr)
-    results = decrypt_all(storage, key_map, actual_output)
+    results = decrypt_all(storage, key_map, actual_output, stable_capture=output_root is not None)
+    if source_fingerprints is not None:
+        for rel, result in results.items():
+            if result.get('ok') and result.get('stable_capture'):
+                source_fingerprints[rel] = result['stable_capture']['source']
     ok = sum(1 for v in results.values() if v.get("ok"))
     fail = matched - ok
 

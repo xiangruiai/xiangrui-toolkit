@@ -7,8 +7,8 @@ import os
 from pathlib import Path
 
 
-__version__ = "2.0.0"
-__version_info__ = (2, 0, 0)
+__version__ = "2.1.0"
+__version_info__ = (2, 1, 0)
 
 
 def get_data_dir() -> Path:
@@ -16,9 +16,9 @@ def get_data_dir() -> Path:
 
     优先级：
         1. `VCHAT_DATA_DIR` 环境变量
-        2. `WECHAT_DECRYPT_PATH` 环境变量（旧变量名，向后兼容）
+        2. `WECHAT_DECRYPT_PATH` 环境变量（旧名，兼容祥瑞历史脚本与 group-daily skill）
         3. `~/.vchat/data`
-        4. `~/Projects/wechat-decrypt`（更早期的默认值，向后兼容）
+        4. `~/Projects/wechat-decrypt`（旧默认值，兼容祥瑞本机）
     """
     for env in ("VCHAT_DATA_DIR", "WECHAT_DECRYPT_PATH"):
         v = os.environ.get(env)

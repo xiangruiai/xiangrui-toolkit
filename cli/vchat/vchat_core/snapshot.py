@@ -14,18 +14,27 @@ POINTER = 'vchat-snapshot.json'
 MANAGED = 'vchat-snapshot-managed.json'
 MANAGED_VALUE = {'version': 1, 'mode': 'isolated-snapshots-no-legacy-fallback'}
 MAX_FILES = 2048
-ROOT_ENV = 'VCHAT_SNAPSHOT_ROOT'
-DEFAULT_ROOT = Path.home() / '.vchat' / 'snapshots'
+ALLOWED_ROOT = Path('/Volumes/Agent Home/00.系统/.runtime/im/wechat')
+VOLUME_UUID = '5BD6450B-170A-4CE5-87BC-679C9B2149B8'
 
 
 def snapshot_root(value=None):
-    raw = value if value is not None else os.environ.get(ROOT_ENV) or DEFAULT_ROOT
-    path = Path(os.path.expanduser(str(raw)))
-    if not path.is_absolute():
-        raise RuntimeError('snapshot root must be an absolute path')
+    path = Path(value) if value is not None else ALLOWED_ROOT
+    if path != ALLOWED_ROOT:
+        raise RuntimeError('snapshot root must be the fixed Agent Home runtime')
     for node in [path, *path.parents]:
         if node.is_symlink():
             raise RuntimeError('snapshot root cannot contain symlinks')
+    if str(path).startswith('/Volumes/'):
+        import plistlib
+        import subprocess
+        volume = Path('/Volumes/Agent Home')
+        if not os.path.ismount(volume):
+            raise RuntimeError('Agent Home volume is unavailable; no legacy fallback')
+        result = subprocess.run(['/usr/sbin/diskutil', 'info', '-plist', str(volume)], capture_output=True, timeout=5)
+        value = plistlib.loads(result.stdout) if result.returncode == 0 else {}
+        if value.get('VolumeUUID') != VOLUME_UUID or value.get('MountPoint') != str(volume):
+            raise RuntimeError('Agent Home volume identity mismatch')
     return path
 
 
@@ -50,11 +59,8 @@ def safe_child(root, relative):
 
 @contextlib.contextmanager
 def refresh_lock(data_dir):
-    # POSIX flock; isolated snapshot mode targets macOS / Linux installs.
-    try:
-        import fcntl
-    except ImportError:
-        raise RuntimeError('隔离快照模式目前仅支持 macOS / Linux') from None
+    # POSIX implementation used by the Agent Home macOS installation only.
+    import fcntl
     root = Path(data_dir).resolve()
     root.mkdir(parents=True, exist_ok=True)
     fd = os.open(root/'vchat-refresh.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -119,8 +125,7 @@ def _mark_managed(control):
 
 def publish(data_dir, output, summary):
     """Publish only one newly generated successful subset, never overlay old DBs."""
-    output = Path(output)
-    root = output.resolve().parent.parent
+    root, output = snapshot_root(), Path(output)
     control = Path(data_dir).resolve()
     relative = output.relative_to(root)
     if len(relative.parts) != 2 or relative.parts[1] != 'decrypted' or not re.fullmatch(r'[a-f0-9]{32}', relative.parts[0]):
@@ -144,22 +149,36 @@ def publish(data_dir, output, summary):
         source = safe_child(storage, rel)
         result = results.get(rel)
         valid = isinstance(result, dict) and result.get('ok') is True
+        failure = None
         if valid:
             try:
-                if fingerprint(source) != original:
-                    raise RuntimeError('source changed during refresh')
-                fingerprint(target)
+                captured = result.get('stable_capture')
+                if captured is not None:
+                    # The live file may already contain newer messages. Bind the
+                    # immutable output to the source captured for this one DB,
+                    # rather than requiring all DBs to stay idle until publish.
+                    if (not isinstance(captured, dict) or captured.get('version') != 1
+                            or captured.get('source') != original
+                            or result.get('verified') is not True
+                            or captured.get('output') != fingerprint(target)
+                            or captured['output'][2] != original[2]):
+                        raise RuntimeError('invalid stable capture')
+                else:
+                    if fingerprint(source) != original:
+                        raise RuntimeError('source changed during refresh')
+                    fingerprint(target)
                 os.chmod(target, 0o600)
-                # Durable signatures omit st_dev, which may change after a
-                # host reboot; identity is inode + size + timestamps.
+                # Durable output signatures are bound to the real Agent Home
+                # volume UUID; st_dev may change after a host reboot.
                 success[rel] = fingerprint(target)[1:]
-            except (OSError, RuntimeError):
+            except (OSError, RuntimeError, KeyError, IndexError, TypeError):
                 valid = False
+                failure = 'output-verification-failed' if result.get('stable_capture') else 'source-unstable'
         if not valid:
             if result is None:
                 missing.append(rel)
             else:
-                failures[rel] = 'decryption-or-stability-check-failed'
+                failures[rel] = failure or result.get('reason', 'decryption-or-stability-check-failed')
             # Failed products were created only inside this exclusive new
             # generation. They must never become readable as successful DBs.
             if target.exists():

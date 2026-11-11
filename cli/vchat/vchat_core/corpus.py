@@ -76,6 +76,15 @@ def _time_sql(window):
     return clauses, params
 
 
+def _conversation(value):
+    """One exact native username, never a name query or a list of recipients."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_.@:#-]{1,240}', value):
+        raise RuntimeError('微信会话过滤需要精确的联系人或群聊 ID，不能使用名称、空白或多个 ID')
+    return value
+
+
 def _progress(deadline):
     return 1 if time.monotonic() >= deadline else 0
 
@@ -106,15 +115,17 @@ def _check_same(data_dir, before):
         raise RuntimeError('微信快照在读取期间改变，请从新快照重新开始；不能续用旧游标')
 
 
-def _inventory(root, binding, deadline):
+def _inventory(root, binding, deadline, conversation=None):
     """Metadata-only cache avoids rescanning every table's COUNT on every page."""
     receipt_hash = _hash(binding)
-    cache_path = root.parent / CACHE
+    cache_path = root.parent / (CACHE if conversation is None else
+                                'corpus-conversation-' + _hash(conversation) + '-v1.json')
     try:
         cached = snapshot._read_metadata(cache_path)
         data = cached.get('inventory')
         if (cached.get('version') == VERSION and cached.get('receipt_sha256') == receipt_hash
-                and isinstance(data, dict) and cached.get('inventory_sha256') == _hash(data)):
+                and isinstance(data, dict) and data.get('conversation_filter') == conversation
+                and cached.get('inventory_sha256') == _hash(data)):
             return data
     except (OSError, ValueError, RuntimeError):
         pass
@@ -126,7 +137,13 @@ def _inventory(root, binding, deadline):
         if time.monotonic() >= deadline:
             raise RuntimeError('微信全量目录统计达到本次时限，未保存不完整统计')
         with _connection(root, shard, deadline) as conn:
-            names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%' ORDER BY name")]
+            if conversation is None:
+                names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%' ORDER BY name")]
+            else:
+                # Resolve the exact table before inspecting/counting message
+                # rows. A filtered run must not scan another conversation.
+                name = 'Msg_' + hashlib.md5(conversation.encode('utf-8')).hexdigest()
+                names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=? COLLATE NOCASE", (name,))]
             for name in names:
                 if not TABLE.fullmatch(name):
                     issues.append({'shard': shard, 'table': name, 'reason': 'unrecognized-message-table-name'})
@@ -160,6 +177,8 @@ def _inventory(root, binding, deadline):
                                'first': start, 'last': end})
     result = {'tables': tables, 'shards': shards, 'source_total': total, 'first': first, 'last': last,
               'issues': issues, 'count_complete': not any(x['reason'] == 'unrecognized-message-table-name' for x in issues)}
+    if conversation is not None:
+        result['conversation_filter'] = conversation
     value = {'version': VERSION, 'receipt_sha256': receipt_hash, 'inventory': result, 'inventory_sha256': _hash(result)}
     fd, tmp = tempfile.mkstemp(prefix='.corpus-inventory-', dir=root.parent)
     try:
@@ -174,7 +193,7 @@ def _inventory(root, binding, deadline):
 
 
 def _common(binding, inventory):
-    return {'version': VERSION, 'account_id': binding['source_identity']['id'],
+    result = {'version': VERSION, 'account_id': binding['source_identity']['id'],
             'source_identity': binding['source_identity'], 'snapshot_generation': binding['snapshot_id'],
             'snapshot_created_at': binding['created_at'], 'source_total': inventory['source_total'] if inventory['count_complete'] else None,
             'source_rows_counted': inventory['source_total'], 'source_total_kind': 'physical-message-rows-before-deduplication',
@@ -191,12 +210,22 @@ def _common(binding, inventory):
                          'time_field_unavailable_tables': inventory.get('time_field_unavailable_tables', 0),
                          'all_snapshot_message_shards_counted': inventory['count_complete'], 'issues': inventory['issues'],
                          'identity_scope': 'local-source-namespace-not-real-wxid'}}
+    if inventory.get('conversation_filter') is not None:
+        result.update(conversation_filter=inventory['conversation_filter'],
+                      scan_scope='conversation-time-window' if inventory.get('time_filter') else 'conversation-history',
+                      all_source_total_scope='selected-conversation')
+        result['coverage'].update(conversation_filter=inventory['conversation_filter'],
+                                  all_snapshot_message_shards_counted=False,
+                                  selected_conversation_all_shards_counted=inventory['count_complete'],
+                                  other_conversations_scanned=False)
+    return result
 
 
 def _window_inventory(root, binding, inventory, window, deadline):
     if window is None: return inventory
     binding_hash = _hash({'binding': binding, 'inventory': inventory, 'window': window})
-    cache_path = root.parent / ('corpus-window-' + _hash(window) + '.json')
+    filter_suffix = '-conversation-' + _hash(inventory['conversation_filter']) if inventory.get('conversation_filter') else ''
+    cache_path = root.parent / ('corpus-window-' + _hash(window) + filter_suffix + '.json')
     try:
         cached = snapshot._read_metadata(cache_path)
         data = cached.get('inventory')
@@ -236,31 +265,44 @@ def _window_inventory(root, binding, inventory, window, deadline):
     return result
 
 
-def stats(data_dir, since=None, until=None):
+def stats(data_dir, since=None, until=None, conversation=None):
+    conversation = _conversation(conversation)
     window = _window(since, until)
     binding, root = _binding(data_dir)
     deadline = time.monotonic() + 60
-    inventory = _window_inventory(root, binding, _inventory(root, binding, deadline), window, deadline)
+    inventory = _window_inventory(root, binding, _inventory(root, binding, deadline, conversation), window, deadline)
     _check_same(data_dir, binding)
     return {**_common(binding, inventory), 'command': 'corpus stats', 'complete': inventory['count_complete'],
             'export_supported': not inventory['issues'],
-            'message': ('统计全部分片内创建时间窗口的物理行；窗口外旧消息的编辑、晚到或无有效时间记录须全量复核。' if window else '统计全部已发布快照消息分片的物理行；重复消息去重后数量由接收方统计，未包含未解密库或上游未同步记录。')}
+            'message': (('仅统计指定会话在全部分片内的物理行；其他会话未扫描。' + ('计数限制于创建时间窗口，窗口外旧编辑、晚到和无有效时间记录须另行复核。' if window else '重复消息由接收方去重，未包含未解密库或上游未同步记录。')) if conversation is not None else ('统计全部分片内创建时间窗口的物理行；窗口外旧消息的编辑、晚到或无有效时间记录须全量复核。' if window else '统计全部已发布快照消息分片的物理行；重复消息去重后数量由接收方统计，未包含未解密库或上游未同步记录。'))}
 
 
 def _cursor(binding, inventory, table_index, after):
     value = {'version': VERSION, 'account_id': binding['source_identity']['id'], 'snapshot_id': binding['snapshot_id'],
              'inventory_sha256': _hash(inventory), 'table_index': table_index, 'after': after}
     if inventory.get('time_filter'): value['time_filter'] = inventory['time_filter']
+    if inventory.get('conversation_filter') is not None: value['conversation_filter'] = inventory['conversation_filter']
     return base64.urlsafe_b64encode(_json(value)).decode().rstrip('=')
 
 
-def _position(cursor, binding, inventory):
-    if cursor is None or cursor == '': return 0, None
+def _cursor_value(cursor):
+    if cursor is None or cursor == '': return None
     if not isinstance(cursor, str) or len(cursor) > 4096: raise RuntimeError('微信导出游标无效')
     try:
         value = json.loads(base64.b64decode(cursor + '='*(-len(cursor)%4), altchars=b'-_', validate=True))
+        if not isinstance(value, dict): raise ValueError()
+        return value
+    except (ValueError, TypeError, UnicodeError):
+        raise RuntimeError('微信导出游标无效或快照已改变；请从当前快照重新开始') from None
+
+
+def _position(cursor, binding, inventory):
+    value = _cursor_value(cursor)
+    if value is None: return 0, None
+    try:
         expected = {'version': VERSION, 'account_id': binding['source_identity']['id'], 'snapshot_id': binding['snapshot_id'], 'inventory_sha256': _hash(inventory)}
         if inventory.get('time_filter'): expected['time_filter'] = inventory['time_filter']
+        if inventory.get('conversation_filter') is not None: expected['conversation_filter'] = inventory['conversation_filter']
         if not isinstance(value, dict) or set(value) != set(expected) | {'table_index','after'}: raise ValueError()
         if any(value.get(key) != expected[key] for key in expected): raise ValueError()
         index, after = value['table_index'], value['after']
@@ -357,19 +399,30 @@ def _cached_connection(session, shard, deadline):
     yield conn
 
 
-def _export_page(data_dir, cursor, limit, page_bytes, session, window=None):
+def _export_page(data_dir, cursor, limit, page_bytes, session, window=None, conversation=None):
     if type(limit) is not int or not 1 <= limit <= MAX_PAGE_ROWS: raise RuntimeError('单页消息条数必须在 1 到 1000 之间')
     if type(page_bytes) is not int or not 65536 <= page_bytes <= PAGE_BYTES: raise RuntimeError('微信单页字节预算无效')
+    value = _cursor_value(cursor)
+    # Check before inventory creation: dropping a filtered cursor's flag must
+    # never trigger a full-history scan before reporting the scope mismatch.
+    if value is not None and value.get('conversation_filter') != conversation:
+        raise RuntimeError('微信导出游标的会话过滤不匹配；请携带原会话 ID 或重新开始导出')
     deadline = time.monotonic()+60
     if 'binding' not in session:
         binding, root = _binding(data_dir)
-        inventory = _window_inventory(root, binding, _inventory(root, binding, deadline), window, deadline)
+        inventory = _window_inventory(root, binding, _inventory(root, binding, deadline, conversation), window, deadline)
         names, conversations = _names(root, binding, deadline)
+        if conversation is not None:
+            # The caller supplies the exact username; a missing address-book
+            # row does not turn its known MD5 table back into an unknown chat.
+            conversations = {table['table']: {conversation} for table in inventory['tables']}
         session.update(binding=binding, root=root, inventory=inventory, names=names, conversations=conversations, senders={})
     else:
         binding, root, inventory = session['binding'], session['root'], session['inventory']
         names, conversations = session['names'], session['conversations']
         _check_same(data_dir, binding)
+        if inventory.get('conversation_filter') != conversation:
+            raise RuntimeError('微信会话过滤已改变，请重新开始导出')
     if inventory['issues']: raise RuntimeError('微信消息分片存在未支持表结构；请先查看 corpus stats 的具体覆盖问题')
     index, after = _position(cursor, binding, inventory)
     items, used, tables = [], 0, inventory['tables']
@@ -390,7 +443,8 @@ def _export_page(data_dir, cursor, limit, page_bytes, session, window=None):
                         if isinstance(r[1], str):
                             sender_map[r[0]] = r[1]
                             candidate = 'Msg_' + hashlib.md5(r[1].encode()).hexdigest()
-                            conversations.setdefault(candidate, set()).add(r[1])
+                            if conversation is None:
+                                conversations.setdefault(candidate, set()).add(r[1])
                 session['senders'][table['shard']] = sender_map
             sender_map = session['senders'][table['shard']]
             key = _quoted(table['key'])
@@ -420,16 +474,17 @@ def _export_page(data_dir, cursor, limit, page_bytes, session, window=None):
             'rows_returned': len(items), 'complete': done, 'has_more': not done,
             'next_cursor': None if done else _cursor(binding, inventory, index, after),
             'page_bytes': used, 'page_limit': limit,
-            'message': ('完整遍历所有分片内 [since,until) 创建时间窗口；complete 只表示该窗口完成，窗口外历史编辑、晚到和无有效时间记录须全量复核。' if window else '完整遍历已发布快照的全部消息表；继续 next_cursor 直到 complete=true。正文不按字符截断，媒体正文保留消息载荷但不自动识别或转写。')}
+            'message': (('仅遍历指定会话在全部分片内的消息表；其他会话未扫描。' + ('complete 只表示该会话 [since,until) 窗口完成，窗口外旧编辑、晚到和无有效时间记录须另行复核。' if window else '继续 next_cursor 直到 complete=true；正文不按字符截断，媒体载荷不自动识别或转写。')) if conversation is not None else ('完整遍历所有分片内 [since,until) 创建时间窗口；complete 只表示该窗口完成，窗口外历史编辑、晚到和无有效时间记录须全量复核。' if window else '完整遍历已发布快照的全部消息表；继续 next_cursor 直到 complete=true。正文不按字符截断，媒体正文保留消息载荷但不自动识别或转写。'))}
 
 
-def export(data_dir, cursor=None, limit=1000, page_bytes=PAGE_BYTES, since=None, until=None):
+def export(data_dir, cursor=None, limit=1000, page_bytes=PAGE_BYTES, since=None, until=None, conversation=None):
+    conversation = _conversation(conversation)
     window = _window(since, until)
     with contextlib.ExitStack() as stack:
-        return _export_page(data_dir, cursor, limit, page_bytes, {'stack': stack}, window)
+        return _export_page(data_dir, cursor, limit, page_bytes, {'stack': stack}, window, conversation)
 
 
-def iter_export(data_dir, cursor=None, limit=1000, pages=None, page_bytes=PAGE_BYTES, since=None, until=None):
+def iter_export(data_dir, cursor=None, limit=1000, pages=None, page_bytes=PAGE_BYTES, since=None, until=None, conversation=None):
     """Yield committed-frame candidates; the receiver commits each cursor.
 
     No page-count limit unless explicitly requested for one invocation. Closing
@@ -438,12 +493,13 @@ def iter_export(data_dir, cursor=None, limit=1000, pages=None, page_bytes=PAGE_B
     """
     if pages is not None and (type(pages) is not int or pages < 1):
         raise RuntimeError('本次批量页数必须是正整数')
+    conversation = _conversation(conversation)
     window = _window(since, until)
     with contextlib.ExitStack() as stack:
         session = {'stack': stack}
         emitted = 0
         while pages is None or emitted < pages:
-            value = _export_page(data_dir, cursor, limit, page_bytes, session, window)
+            value = _export_page(data_dir, cursor, limit, page_bytes, session, window, conversation)
             yield value
             emitted += 1
             if value['complete']: break
