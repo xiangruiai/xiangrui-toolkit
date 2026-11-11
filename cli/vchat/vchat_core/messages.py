@@ -13,7 +13,7 @@ import hashlib
 import re
 import sqlite3
 from datetime import datetime
-from typing import Optional
+from typing import Iterator, Optional
 
 from . import cache as _cache
 from . import contacts as _contacts
@@ -50,9 +50,14 @@ def find_message_table(username: str) -> Optional[tuple[str, str]]:
 
     返回 (db_rel_path, table_name)，找不到返回 None。
     """
+    return next(_iter_message_tables(username), None)
+
+
+def _iter_message_tables(username: str) -> Iterator[tuple[str, str]]:
+    """逐个返回该联系人在各消息分片中的表，不读取其他会话正文。"""
     table = _msg_table_name(username)
     if not _is_safe_table_name(table):
-        return None
+        return
     for db_rel in _list_message_dbs():
         try:
             conn = _cache.get(db_rel)
@@ -63,8 +68,7 @@ def find_message_table(username: str) -> Optional[tuple[str, str]]:
             (table,),
         ).fetchone()
         if exists:
-            return db_rel, table
-    return None
+            yield db_rel, table
 
 
 # ---- 公开 API ----
@@ -165,18 +169,10 @@ def _build_sender_map(db_rel: str) -> dict[int, str]:
     return {r["rowid"]: r["user_name"] for r in rows}
 
 
-def _format_chat_history(ctx: dict, limit: int, offset: int,
-                         start_time: str, end_time: str,
-                         oldest_first: bool) -> str:
-    location = find_message_table(ctx["username"])
-    if not location:
-        return f"❌ 没找到 {ctx['display_name']} 的消息表（可能没聊过）"
-    db_rel, table = location
-    conn = _cache.get(db_rel)
-    names = _contacts.get_contact_names()
-    sender_map = _build_sender_map(db_rel)
-    self_wxid = _contacts.get_self_username()
-
+def _chat_history_rows(username: str, limit: int, offset: int,
+                       start_time: str, end_time: str,
+                       oldest_first: bool) -> Optional[list[tuple[str, sqlite3.Row]]]:
+    """合并同一会话的所有分片，再统一排序、分页；None 表示无消息表。"""
     where = ["1=1"]
     params: list = []
     start_ts = _parse_ts(start_time)
@@ -189,16 +185,42 @@ def _format_chat_history(ctx: dict, limit: int, offset: int,
         params.append(end_ts)
 
     order = "ASC" if oldest_first else "DESC"
-    sql = (
-        f"SELECT local_id, create_time, local_type, real_sender_id, "
-        f"message_content FROM [{table}] "
-        f"WHERE {' AND '.join(where)} "
-        f"ORDER BY create_time {order} LIMIT ? OFFSET ?"
-    )
-    params += [limit, offset]
-    rows = conn.execute(sql, params).fetchall()
+    offset = max(0, offset)
+    shard_limit = limit + offset if limit >= 0 else -1
+    found_table = False
+    rows = []
+    for db_rel, table in _iter_message_tables(username):
+        found_table = True
+        conn = _cache.get(db_rel)
+        selected = conn.execute(
+            f"SELECT local_id, create_time, local_type, real_sender_id, "
+            f"message_content FROM [{table}] "
+            f"WHERE {' AND '.join(where)} "
+            f"ORDER BY create_time {order}, local_id {order} LIMIT ?",
+            params + [shard_limit],
+        ).fetchall()
+        rows.extend((db_rel, row) for row in selected)
+    if not found_table:
+        return None
+    rows.sort(key=lambda item: (item[1]["create_time"] or 0, item[0],
+                                item[1]["local_id"] or 0),
+              reverse=not oldest_first)
+    return rows[offset:offset + limit] if limit >= 0 else rows[offset:]
+
+
+def _format_chat_history(ctx: dict, limit: int, offset: int,
+                         start_time: str, end_time: str,
+                         oldest_first: bool) -> str:
+    rows = _chat_history_rows(ctx["username"], limit, offset,
+                              start_time, end_time, oldest_first)
+    if rows is None:
+        return f"❌ 没找到 {ctx['display_name']} 的消息表（可能没聊过）"
     if not rows:
         return f"（{ctx['display_name']} 范围内无消息）"
+    names = _contacts.get_contact_names()
+    sender_maps = {db_rel: _build_sender_map(db_rel)
+                   for db_rel in {shard for shard, _ in rows}}
+    self_wxid = _contacts.get_self_username()
 
     out = [
         f"{ctx['display_name']} 的消息记录"
@@ -211,7 +233,8 @@ def _format_chat_history(ctx: dict, limit: int, offset: int,
 
     from . import content as _content_module
 
-    for r in rows:
+    for db_rel, r in rows:
+        sender_map = sender_maps[db_rel]
         ts = r["create_time"]
         when = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "—"
         local_type = r["local_type"]
@@ -381,37 +404,18 @@ def get_chat_history_dict(chat_name: str, limit: int = 50,
     ctx = _contacts.resolve_chat_context(chat_name)
     if not ctx:
         return []
-    location = find_message_table(ctx["username"])
-    if not location:
+    rows = _chat_history_rows(ctx["username"], limit, 0,
+                              start_time, end_time, oldest_first)
+    if not rows:
         return []
-    db_rel, table = location
-    conn = _cache.get(db_rel)
-    sender_map = _build_sender_map(db_rel)
+    sender_maps = {db_rel: _build_sender_map(db_rel)
+                   for db_rel in {shard for shard, _ in rows}}
     self_wxid = _contacts.get_self_username()
     names = _contacts.get_contact_names()
 
-    where = ["1=1"]
-    params: list = []
-    start_ts = _parse_ts(start_time)
-    end_ts = _parse_ts(end_time)
-    if start_ts:
-        where.append("create_time >= ?")
-        params.append(start_ts)
-    if end_ts:
-        where.append("create_time <= ?")
-        params.append(end_ts)
-
-    order = "ASC" if oldest_first else "DESC"
-    rows = conn.execute(
-        f"SELECT local_id, create_time, local_type, real_sender_id, "
-        f"message_content FROM [{table}] "
-        f"WHERE {' AND '.join(where)} "
-        f"ORDER BY create_time {order} LIMIT ?",
-        params + [limit],
-    ).fetchall()
-
     result = []
-    for r in rows:
+    for db_rel, r in rows:
+        sender_map = sender_maps[db_rel]
         sid = r["real_sender_id"]
         wxid = sender_map.get(sid, "")
         if wxid == self_wxid:

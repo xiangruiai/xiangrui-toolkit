@@ -74,7 +74,7 @@ def decrypt_page(page_data: bytes, page_num: int, enc_key: bytes, mac_key: bytes
 
     # 微信消息分片可能包含未分配的稀疏页。该页在磁盘上保持全零，
     # 没有 IV/HMAC；将其视为空白页，不能因为它没有认证尾部而中断整库解密。
-    if not any(page_data):
+    if not any(page_data) and not is_first_page:
         return bytes(PAGE_SIZE)
 
     if is_first_page:
@@ -129,7 +129,7 @@ def decrypt_db(encrypted_path: Path, output_path: Path, raw_key_hex: str,
     output_path = Path(output_path)
 
     size = encrypted_path.stat().st_size
-    if size % PAGE_SIZE != 0:
+    if size < PAGE_SIZE or size % PAGE_SIZE != 0:
         raise ValueError(f"db 大小 {size} 不是 {PAGE_SIZE} 的整数倍 — 可能不是 SQLCipher db 或被截断")
     n_pages = size // PAGE_SIZE
     if max_pages is not None:
@@ -146,7 +146,7 @@ def decrypt_db(encrypted_path: Path, output_path: Path, raw_key_hex: str,
         for pg in range(1, n_pages + 1):
             page = inp.read(PAGE_SIZE)
             if len(page) != PAGE_SIZE:
-                break  # 文件末尾对不齐
+                raise ValueError(f'db 在读取期间截断 page={pg}')
             plain = decrypt_page(page, pg, raw_key, mac_key, is_first_page=(pg == 1))
             out.write(plain)
 

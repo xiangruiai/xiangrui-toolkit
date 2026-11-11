@@ -162,10 +162,18 @@ def v2_decrypt(path: Path, out_path: Optional[Path] = None,
         if aes_key is None:
             return None, None
         if isinstance(aes_key, str):
-            aes_key_b = aes_key.encode("ascii")[:16]
+            if len(aes_key) == 32:
+                try:
+                    aes_key_b = bytes.fromhex(aes_key)
+                except ValueError:
+                    return None, None
+            elif len(aes_key) == 16:
+                aes_key_b = aes_key.encode("ascii")
+            else:
+                return None, None
         else:
-            aes_key_b = aes_key[:16]
-        if len(aes_key_b) < 16:
+            aes_key_b = aes_key
+        if len(aes_key_b) != 16:
             return None, None
 
     if isinstance(xor_key, str):

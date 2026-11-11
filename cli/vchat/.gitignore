@@ -13,7 +13,7 @@ venv/
 .vscode/
 .idea/
 
-# 运行时产物（如果有人把 vchat 放在解密目录里跑）
+# 运行时产物（如果有人把 wxchat 放在解密目录里跑）
 decrypted/
 decoded_voices/
 decoded_images/
