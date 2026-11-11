@@ -1,4 +1,4 @@
-本文是 GitHub 个人介绍页 README 的正式副本；原先的独立介绍仓库已删除。
+本文是 GitHub 个人介绍页 README 的正本；原先的独立介绍仓库已删除。
 
 <h1 align="center">李祥瑞 · Li&nbsp;Xiangrui</h1>
 
