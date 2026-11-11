@@ -1,4 +1,4 @@
-# xiangrui-toolkit
+# xiangruiai-toolkit
 
 > 万涂幻象开源工具箱。
 >
@@ -31,11 +31,11 @@
 ## 目录结构
 
 ```
-xiangrui-toolkit/
+xiangruiai-toolkit/
 ├── apps/
 │   ├── whiteboard-recorder/          ← 祥瑞白板录制工具（白板 + 录制 + 摄像头 + 素材库 + 提词器）
 │   ├── deepseek-harness-desktop/     ← DeepSeek Harness 桌面安装说明（完整包在 Release）
-│   └── xiangruiai-demo/              ← demo.xiangruiai.com 落地页（布局习作，线上仍由独立仓库提供）
+│   └── xiangruiai-demo/              ← demo.xiangruiai.com 落地页（布局习作；独立仓库已删除，正式副本在本目录）
 ├── cli/
 │   └── vchat/                        ← 微信本地数据查询 / 解密 / 导出 CLI（群日报等技能的数据底座）
 ├── plugins/
@@ -44,7 +44,7 @@ xiangrui-toolkit/
 ├── archives/
 │   └── group-daily/xiangrui-community/ ← 社区群日报脱敏公开归档
 ├── docs/
-│   └── profile.md                    ← GitHub 个人介绍页副本（线上介绍仍在 xiangruiai/xiangruiai）
+│   └── profile.md                    ← GitHub 个人介绍页副本（独立介绍仓库已删除，本文件为正式副本）
 └── skills/                              ← 19 个 Skill，按领域分 8 类
     ├── Agent能力/
     │   └── discover-local-capabilities/ 完整扫描本机能力并建立自然语言路由闭环
@@ -90,8 +90,8 @@ xiangrui-toolkit/
 这是一个网页端白板录制工具，不需要桌面端安装。移动端访问时会提示在电脑浏览器中使用，移动端体验后续再完善。
 
 ```bash
-git clone https://github.com/xiangruiai/xiangrui-toolkit.git
-cd xiangrui-toolkit/apps/whiteboard-recorder
+git clone https://github.com/xiangruiai/xiangruiai-toolkit.git
+cd xiangruiai-toolkit/apps/whiteboard-recorder
 npm install
 npm run dev
 ```
@@ -107,7 +107,7 @@ npm run preview  # 本地预览构建产物
 
 部署时把 `apps/whiteboard-recorder` 作为项目根目录，构建命令用 `npm install && npm run build`，静态输出目录为 `dist`。摄像头、麦克风和录屏能力需要在 `localhost` 或 HTTPS 域名下使用。
 
-本工具作为 `xiangrui-toolkit` 的一部分开源，不再维护单独工具仓库。白板编辑基于 Excalidraw，录制、摄像头、提词器和幻灯片工作流参考了开源生态与 Excalicord 的产品思路，具体来源和许可证说明见第三方来源说明。
+本工具作为 `xiangruiai-toolkit` 的一部分开源，不再维护单独工具仓库。白板编辑基于 Excalidraw，录制、摄像头、提词器和幻灯片工作流参考了开源生态与 Excalicord 的产品思路，具体来源和许可证说明见第三方来源说明。
 
 ---
 
@@ -115,9 +115,9 @@ npm run preview  # 本地预览构建产物
 
 非官方 macOS 桌面壳，把 DeepSeek Harness 的 Web UI 包成原生窗口，图标使用 DeepSeek 鲸鱼。本目录只放安装包，不放源码。
 
-- 安装包：[DeepSeek-Harness-Desktop-1.2.0-macOS-Apple-Silicon.dmg](https://github.com/xiangruiai/xiangrui-toolkit/releases/download/v1.2.0/DeepSeek-Harness-Desktop-1.2.0-macOS-Apple-Silicon.dmg)
+- 安装包：[DeepSeek-Harness-Desktop-1.2.0-macOS-Apple-Silicon.dmg](https://github.com/xiangruiai/xiangruiai-toolkit/releases/download/v1.2.0/DeepSeek-Harness-Desktop-1.2.0-macOS-Apple-Silicon.dmg)
 - 说明：[`apps/deepseek-harness-desktop/README.md`](apps/deepseek-harness-desktop/README.md)
-- 发布页：[xiangrui-toolkit · Releases](https://github.com/xiangruiai/xiangrui-toolkit/releases)
+- 发布页：[xiangruiai-toolkit · Releases](https://github.com/xiangruiai/xiangruiai-toolkit/releases)
 
 打开就能用。Node.js 和 Harness 已打进安装包。完整 DMG 在 GitHub Release，本仓库只留下载入口。不是 DeepSeek 官方客户端。
 
@@ -132,7 +132,7 @@ npm run preview  # 本地预览构建产物
 在任意 Claude Code 会话里安装：
 
 ```
-/plugin marketplace add xiangruiai/xiangrui-toolkit
+/plugin marketplace add xiangruiai/xiangruiai-toolkit
 /plugin install xiangrui-hud
 ```
 
@@ -148,7 +148,7 @@ npm run preview  # 本地预览构建产物
 - 安装使用：[`plugins/xiangrui-taskboard/README.md`](plugins/xiangrui-taskboard/README.md)
 
 ```bash
-codex plugin marketplace add xiangruiai/xiangrui-toolkit --ref main
+codex plugin marketplace add xiangruiai/xiangruiai-toolkit --ref main
 codex plugin add xiangrui-taskboard@vantasma-codex
 ```
 
@@ -165,7 +165,7 @@ codex plugin add xiangrui-taskboard@vantasma-codex
 
 安装只需要把一句话贴给 Claude Code / Codex 等 AI Agent（自动 clone → install.sh → `sudo vchat setup`，过程中需要输一次 sudo 密码、保持微信桌面版开着并已登录）：
 
-> 帮我安装 https://github.com/xiangruiai/xiangrui-toolkit 里的 vchat CLI（微信本地数据查询 / 解密工具），路径是 cli/vchat。按它 README 走完整安装，装完跑 vchat doctor 和 vchat ls 20 给我看结果，再告诉我常用命令怎么用。
+> 帮我安装 https://github.com/xiangruiai/xiangruiai-toolkit 里的 vchat CLI（微信本地数据查询 / 解密工具），路径是 cli/vchat。按它 README 走完整安装，装完跑 vchat doctor 和 vchat ls 20 给我看结果，再告诉我常用命令怎么用。
 
 只处理自己本机、自己账号的本地数据，全程不上传；仅供个人学习研究，详见组件目录的免责声明与 LICENSE。
 
@@ -267,7 +267,7 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 - 源码目录：[`apps/xiangruiai-demo`](apps/xiangruiai-demo)
 - 说明：[`apps/xiangruiai-demo/README.md`](apps/xiangruiai-demo/README.md)
 
-本地预览可直接打开 `apps/xiangruiai-demo/index.html`，或在该目录起一个静态服务器。线上站点目前仍由独立仓库 [xiangruiai/xiangruiai-demo](https://github.com/xiangruiai/xiangruiai-demo) 提供。
+本地预览可直接打开 `apps/xiangruiai-demo/index.html`，或在该目录起一个静态服务器。提供该站点的独立仓库已删除；正式副本在本工具箱 [`apps/xiangruiai-demo`](apps/xiangruiai-demo)（不含 `CNAME`，以免抢占 GitHub Pages 的域名绑定）。
 
 ---
 
@@ -275,14 +275,14 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 
 **北京万涂幻象科技有限公司** · 成立于 2026 年 5 月 · 北京亦庄 · 国家信创园 WaytoAGI 模数 OPC 社区
 
-完整个人介绍见 [`docs/profile.md`](docs/profile.md)（GitHub 个人介绍页副本；线上介绍仍在 [xiangruiai/xiangruiai](https://github.com/xiangruiai/xiangruiai)）。
+完整个人介绍见 [`docs/profile.md`](docs/profile.md)（GitHub 个人介绍页副本；独立介绍仓库已删除，本文件为正式副本）。
 
 万涂幻象的理念，是为硅基智能构建长期连续性的系统基础：以自研的 **Agent 上下文与主体连续性技术**为底座，在上面跑着三条业务——**企业 AI 落地**（定制开发 · FDE 深度陪跑 · 企业内训 · 项目制咨询，聚焦制造、教育、电商）、**课程与培训**（企业 AI 实战工作坊 · 个人实战课程）、**品牌宣传**（公众号「祥瑞的上下文」，230+ 篇原创）。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
 | | |
 |---|---|
 | 公司业务最新介绍 | [北京万涂幻象科技有限公司 · 飞书](<https://waytoagi.feishu.cn/wiki/EAJkw9JcviTt3UkjoyXcKkLzn1W>) |
-| 开源工具箱 | [xiangruiai/xiangrui-toolkit](https://github.com/xiangruiai/xiangrui-toolkit) |
+| 开源工具箱 | [xiangruiai/xiangruiai-toolkit](https://github.com/xiangruiai/xiangruiai-toolkit) |
 | 公众号 | 祥瑞的上下文 |
 | 联系 | li@xiangruiai.com |
 

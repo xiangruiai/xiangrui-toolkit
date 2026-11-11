@@ -2497,7 +2497,7 @@ def main():
     p = argparse.ArgumentParser(
         prog="vchat",
         description="vchat — 微信本地数据查询、解密、导出 CLI（万涂幻象出品 · 个人学习用途）",
-        epilog="详见 README.md · https://github.com/xiangruiai/vantasma-toolkit",
+        epilog="详见 README.md · https://github.com/xiangruiai/xiangruiai-toolkit",
     )
     p.add_argument("--version", action="version", version=f"vchat {__version__}")
     p.add_argument("--json", dest="json_out", action="store_true",

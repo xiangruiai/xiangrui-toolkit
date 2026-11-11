@@ -77,7 +77,7 @@
 **李祥瑞**，一人公司实践者。用 AI 工具跑通公众号内容运营的全流程，从选题、写作、排版到数据复盘。
 
 - 公众号：祥瑞的上下文
-- GitHub：[@Larkin0302](https://github.com/Larkin0302)
+- GitHub：[@xiangruiai](https://github.com/xiangruiai)
 
 ---
 
