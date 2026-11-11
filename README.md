@@ -2,7 +2,7 @@
 
 > 万涂幻象开源工具箱。
 >
-> 含 2 个 Web 应用（祥瑞白板录制工具、demo.xiangruiai.com 落地页）+ 1 个 macOS 安装包（DeepSeek Harness 桌面壳）+ 1 个 CLI（vchat 微信本地数据工具）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 19 个 Skill（按领域分 8 类）+ 公开内容归档 + GitHub 个人介绍。
+> 含 1 个 Web 应用（祥瑞白板录制工具）+ 1 个 macOS 安装包（DeepSeek Harness 桌面壳）+ 1 个 CLI（vchat 微信本地数据工具）+ 1 个 Codex 插件（祥瑞任务面板）+ 1 个 Claude Code 插件（xiangrui-hud 状态栏）+ 19 个 Skill（按领域分 8 类）+ 公开内容归档 + GitHub 个人介绍。
 
 ---
 
@@ -34,8 +34,7 @@
 xiangruiai-toolkit/
 ├── apps/
 │   ├── whiteboard-recorder/          ← 祥瑞白板录制工具（白板 + 录制 + 摄像头 + 素材库 + 提词器）
-│   ├── deepseek-harness-desktop/     ← DeepSeek Harness 桌面安装说明（完整包在 Release）
-│   └── xiangruiai-demo/              ← demo.xiangruiai.com 落地页（布局习作）
+│   └── deepseek-harness-desktop/     ← DeepSeek Harness 桌面安装说明（完整包在 Release）
 ├── cli/
 │   └── vchat/                        ← 微信本地数据查询 / 解密 / 导出 CLI（群日报等技能的数据底座）
 ├── plugins/
@@ -260,22 +259,11 @@ cp -r skills/飞书办公/feishu-proposal ~/.claude/skills/
 
 ---
 
-## 8. xiangruiai-demo 落地页
-
-受 [oryzo.ai](https://oryzo.ai) 启发的布局习作落地页（粉丝向致敬重建，非官方、无关联），线上地址是 [https://demo.xiangruiai.com](https://demo.xiangruiai.com)。
-
-- 源码目录：[`apps/xiangruiai-demo`](apps/xiangruiai-demo)
-- 说明：[`apps/xiangruiai-demo/README.md`](apps/xiangruiai-demo/README.md)
-
-本地预览可直接打开 `apps/xiangruiai-demo/index.html`，或在该目录起一个静态服务器。源码在 [`apps/xiangruiai-demo`](apps/xiangruiai-demo)（不含 `CNAME`，以免抢占 GitHub Pages 的域名绑定）。
-
----
-
 ## 关于万涂幻象
 
 **北京万涂幻象科技有限公司** · 成立于 2026 年 5 月 · 北京亦庄 · 国家信创园 WaytoAGI 模数 OPC 社区
 
-完整个人介绍见 [`docs/profile.md`](docs/profile.md)。
+完整个人介绍见 [`docs/profile.md`](docs/profile.md)，GitHub 主页 [https://github.com/xiangruiai](https://github.com/xiangruiai) 同样展示这份介绍。
 
 万涂幻象的理念，是为硅基智能构建长期连续性的系统基础：以自研的 **Agent 上下文与主体连续性技术**为底座，在上面跑着三条业务——**企业 AI 落地**（定制开发 · FDE 深度陪跑 · 企业内训 · 项目制咨询，聚焦制造、教育、电商）、**课程与培训**（企业 AI 实战工作坊 · 个人实战课程）、**品牌宣传**（公众号「祥瑞的上下文」，230+ 篇原创）。技术不空转，每一次业务交付都是对底座的一次真实验证。
 
