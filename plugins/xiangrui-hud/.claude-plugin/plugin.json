@@ -10,8 +10,8 @@
     "./commands/setup.md",
     "./commands/configure.md"
   ],
-  "homepage": "https://github.com/xiangruiai/xiangrui-toolkit/tree/main/plugins/xiangrui-hud",
-  "repository": "https://github.com/xiangruiai/xiangrui-toolkit",
+  "homepage": "https://github.com/xiangruiai/xiangruiai-toolkit/tree/main/plugins/xiangrui-hud",
+  "repository": "https://github.com/xiangruiai/xiangruiai-toolkit",
   "license": "MIT",
   "keywords": ["hud", "monitoring", "statusline", "context", "tools", "agents", "todos", "claude-code", "xiangrui", "vantasma"]
 }

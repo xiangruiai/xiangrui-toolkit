@@ -1,4 +1,4 @@
-本文是 GitHub 个人介绍页 README 的副本；线上介绍仍在 [xiangruiai/xiangruiai](https://github.com/xiangruiai/xiangruiai)。
+本文是 GitHub 个人介绍页 README 的正式副本；原先的独立介绍仓库已删除。
 
 <h1 align="center">李祥瑞 · Li&nbsp;Xiangrui</h1>
 
@@ -46,13 +46,13 @@
 
 | 项目 | 简介 |
 |---|---|
-| [**xiangrui-toolkit**](https://github.com/xiangruiai/xiangrui-toolkit) | 万涂幻象开源工具箱：CLI、Skill、插件与应用 |
-| [**vchat**](https://github.com/xiangruiai/xiangrui-toolkit/tree/main/cli/vchat) | 微信本地数据查询 / 解密 / 导出 CLI · Agent 一句话安装 |
-| [**feishu-bitable-skill**](https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/飞书办公/feishu-bitable-skill) | 飞书多维表格 OpenClaw 技能：从零搭建 + 日常 CRUD |
-| [**feishu-proposal**](https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/飞书办公/feishu-proposal) | 基于飞书 CLI 的客户方案自动生成技能 |
-| [**group-daily**](https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/内容设计/group-daily) | 微信群对话 → 杂志风故事化日报（HTML + PNG 长图） |
-| [**group-daily-newspaper**](https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/内容设计/group-daily-newspaper) | 群日报·人民日报式 A3 报纸版，可印刷彩打 |
-| [**mp-data**](https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/数据抓取/mp-data) | 微信公众号全量数据抓取与可视化分析 |
+| [**xiangruiai-toolkit**](https://github.com/xiangruiai/xiangruiai-toolkit) | 万涂幻象开源工具箱：CLI、Skill、插件与应用 |
+| [**vchat**](https://github.com/xiangruiai/xiangruiai-toolkit/tree/main/cli/vchat) | 微信本地数据查询 / 解密 / 导出 CLI · Agent 一句话安装 |
+| [**feishu-bitable-skill**](https://github.com/xiangruiai/xiangruiai-toolkit/tree/main/skills/飞书办公/feishu-bitable-skill) | 飞书多维表格 OpenClaw 技能：从零搭建 + 日常 CRUD |
+| [**feishu-proposal**](https://github.com/xiangruiai/xiangruiai-toolkit/tree/main/skills/飞书办公/feishu-proposal) | 基于飞书 CLI 的客户方案自动生成技能 |
+| [**group-daily**](https://github.com/xiangruiai/xiangruiai-toolkit/tree/main/skills/内容设计/group-daily) | 微信群对话 → 杂志风故事化日报（HTML + PNG 长图） |
+| [**group-daily-newspaper**](https://github.com/xiangruiai/xiangruiai-toolkit/tree/main/skills/内容设计/group-daily-newspaper) | 群日报·人民日报式 A3 报纸版，可印刷彩打 |
+| [**mp-data**](https://github.com/xiangruiai/xiangruiai-toolkit/tree/main/skills/数据抓取/mp-data) | 微信公众号全量数据抓取与可视化分析 |
 
 ### 📊 社区数据 · By the Numbers
 

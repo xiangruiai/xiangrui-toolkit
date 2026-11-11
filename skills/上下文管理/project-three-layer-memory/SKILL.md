@@ -98,4 +98,4 @@ python3 "<skill-dir>/scripts/install.py" --agent "<宿主标识>" --scope user -
 
 已有托管安装可用 `--global-only --enable-global` 加明确 `--agent` 只接入协议；单项目安装使用 `--scope project --project "<项目根目录>"`，不同时启用全局。撤销默认以相同宿主使用 `--disable-global`，原生文件只移除受管块；Cursor 或无全局文件的 generic 需要按返回说明移除界面规则，不把生成说明冒充关闭成功。保留其他规则、已安装 Skill 和项目记忆。
 
-详细安装和退出方法见 [README](README.md)，宿主入口及真实限制见 [多宿主接入](references/hosts.md)；来源与设计边界见 [设计依据](references/design-basis.md)，验收方法见 [接续验证](references/acceptance.md)。独立个人记忆需求使用 [three-layer-memory](https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/%E7%9F%A5%E8%AF%86%E7%AE%A1%E7%90%86/three-layer-memory)。
+详细安装和退出方法见 [README](README.md)，宿主入口及真实限制见 [多宿主接入](references/hosts.md)；来源与设计边界见 [设计依据](references/design-basis.md)，验收方法见 [接续验证](references/acceptance.md)。独立个人记忆需求使用 [three-layer-memory](https://github.com/xiangruiai/xiangruiai-toolkit/tree/main/skills/%E7%9F%A5%E8%AF%86%E7%AE%A1%E7%90%86/three-layer-memory)。

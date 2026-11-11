@@ -2,7 +2,7 @@
 
 本页描述怎样验证，不代表某个安装环境已经全部通过。记录实际命令、文件位置和结果，区分以下三种证据。
 
-Codex 首版的 54 项脚本测试见 [首版发布 PR #24](https://github.com/xiangruiai/xiangrui-toolkit/pull/24)；两次独立 Codex 原生运行另有交付验收记录，不能仅从该 PR 的脚本结果推定。这些都是该版本、该宿主的既有证据。多宿主改造要另做受影响回归；Claude Code、Gemini CLI、Cursor 的配置文件检查不能冒充各自已登录原生会话的接续验收。
+Codex 首版的 54 项脚本测试见 [首版发布 PR #24](https://github.com/xiangruiai/xiangruiai-toolkit/pull/24)；两次独立 Codex 原生运行另有交付验收记录，不能仅从该 PR 的脚本结果推定。这些都是该版本、该宿主的既有证据。多宿主改造要另做受影响回归；Claude Code、Gemini CLI、Cursor 的配置文件检查不能冒充各自已登录原生会话的接续验收。
 
 ## 1. 脚本行为
 

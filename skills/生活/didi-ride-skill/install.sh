@@ -6,11 +6,11 @@
 # 两种安装方式：
 #
 #   方式 1 — 远程安装（推荐分享给他人）:
-#     zsh <(curl -fsSL "https://raw.githubusercontent.com/xiangruiai/vantasma-toolkit/main/skills/生活/didi-ride-skill/install.sh")
+#     zsh <(curl -fsSL "https://raw.githubusercontent.com/xiangruiai/xiangruiai-toolkit/main/skills/生活/didi-ride-skill/install.sh")
 #
 #   方式 2 — 本地安装（从 toolkit clone 后执行）:
-#     git clone https://github.com/xiangruiai/vantasma-toolkit.git
-#     zsh "vantasma-toolkit/skills/生活/didi-ride-skill/install.sh"
+#     git clone https://github.com/xiangruiai/xiangruiai-toolkit.git
+#     zsh "xiangruiai-toolkit/skills/生活/didi-ride-skill/install.sh"
 #
 set -euo pipefail
 
@@ -24,7 +24,7 @@ SKILL_DST="$HOME/.openclaw/skills/$SKILL_NAME"
 PLUGIN_SPEC="@larksuiteoapi/feishu-openclaw-plugin"
 PLUGIN_ID="feishu-openclaw-plugin"
 STOCK_PLUGIN_ID="feishu"
-TOOLKIT_REPO="${VANTASMA_TOOLKIT_REPO:-https://github.com/xiangruiai/vantasma-toolkit.git}"
+TOOLKIT_REPO="${XIANGRUIAI_TOOLKIT_REPO:-${VANTASMA_TOOLKIT_REPO:-https://github.com/xiangruiai/xiangruiai-toolkit.git}}"
 SKILL_SUBPATH="skills/生活/didi-ride-skill"
 CONFIG="$HOME/.openclaw/openclaw.json"
 MIN_PLUGIN_VERSION="2026.3.0"
@@ -116,7 +116,7 @@ deploy_skill() {
             exit 1
         fi
         mkdir -p "$HOME/.openclaw/skills"
-        info "从 vantasma-toolkit 拉取 $SKILL_SUBPATH ..."
+        info "从 xiangruiai-toolkit 拉取 $SKILL_SUBPATH ..."
         local _tmp
         _tmp="$(mktemp -d)"
         if git clone --depth=1 "$TOOLKIT_REPO" "$_tmp" 2>/dev/null; then
@@ -126,7 +126,7 @@ deploy_skill() {
             ok "技能已部署到 $SKILL_DST"
         else
             rm -rf "$_tmp"
-            fail "clone vantasma-toolkit 失败"
+            fail "clone xiangruiai-toolkit 失败"
             exit 1
         fi
     fi
@@ -528,7 +528,7 @@ report() {
 
     echo "  ${DIM}更新技能: cd ~/.openclaw/skills/didi-ride && git pull${NC}"
     echo "  ${DIM}卸载技能: zsh ~/.openclaw/skills/didi-ride/uninstall.sh${NC}"
-    echo "  ${DIM}问题反馈: https://github.com/xiangruiai/vantasma-toolkit/issues${NC}"
+    echo "  ${DIM}问题反馈: https://github.com/xiangruiai/xiangruiai-toolkit/issues${NC}"
     echo ""
 }
 

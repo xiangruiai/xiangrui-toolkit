@@ -6,7 +6,7 @@
 
 ## 直接把这一句话发给 Agent
 
-> 请从 https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/上下文管理/project-three-layer-memory 安装项目级三层记忆 Skill。识别我现在使用的 Agent 宿主，显式选择安装器的 --agent，接入该宿主支持的全局和项目规则，保留已有内容。让以后明确打开的项目在首次实际工作时建立自己的记忆，新对话从项目文件继续。检查当前项目已有文档并复用相同职责的入口；若宿主全局规则只能在界面配置，请生成可直接粘贴的规则和接入说明，不要把文件已生成当成全局已启用。完成后告诉我实际路径、接续验证结果和仍需我处理的动作。
+> 请从 https://github.com/xiangruiai/xiangruiai-toolkit/tree/main/skills/上下文管理/project-three-layer-memory 安装项目级三层记忆 Skill。识别我现在使用的 Agent 宿主，显式选择安装器的 --agent，接入该宿主支持的全局和项目规则，保留已有内容。让以后明确打开的项目在首次实际工作时建立自己的记忆，新对话从项目文件继续。检查当前项目已有文档并复用相同职责的入口；若宿主全局规则只能在界面配置，请生成可直接粘贴的规则和接入说明，不要把文件已生成当成全局已启用。完成后告诉我实际路径、接续验证结果和仍需我处理的动作。
 
 这句话已经明确授权安装与全局接入。Agent 应在权限内完成检查、备份、安装和验证，不用反复让你批准同一件事。宿主自身的信任或技能激活确认仍按实际要求执行。已有同名不同内容的包或真实权限问题会明确报告，不会静默覆盖。
 
@@ -195,6 +195,6 @@ python3 "<skill-dir>/scripts/install.py" --agent codex --disable-global
 
 实现参考 [Codex 全局与项目规则](https://learn.chatgpt.com/docs/agent-configuration/agents-md)、[Claude Code Memory](https://code.claude.com/docs/en/memory)、[Gemini CLI 上下文](https://geminicli.com/docs/cli/gemini-md/)、[Cursor Rules](https://cursor.com/docs/rules)，以及持久笔记与跨会话交接方法。具体来源和取舍见 [设计依据](references/design-basis.md)。三层名称和文件布局是本工具的设计约定，不宣称这些厂商规定了统一的三层模型。
 
-个人身份、偏好和跨项目个人经验管理继续使用 [个人版 three-layer-memory](https://github.com/xiangruiai/xiangrui-toolkit/tree/main/skills/%E7%9F%A5%E8%AF%86%E7%AE%A1%E7%90%86/three-layer-memory)。两个 Skill 的记忆范围分别为个人和单个项目。
+个人身份、偏好和跨项目个人经验管理继续使用 [个人版 three-layer-memory](https://github.com/xiangruiai/xiangruiai-toolkit/tree/main/skills/%E7%9F%A5%E8%AF%86%E7%AE%A1%E7%90%86/three-layer-memory)。两个 Skill 的记忆范围分别为个人和单个项目。
 
 本组件采用独立 [MIT License](LICENSE)，可用于个人、团队与商业项目。保留许可证和署名。
